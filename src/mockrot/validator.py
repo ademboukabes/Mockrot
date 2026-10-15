@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import MISSING, fields, is_dataclass
-from typing import TYPE_CHECKING, Any, get_type_hints
+from typing import TYPE_CHECKING, Any, get_type_hints, is_typeddict
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -59,7 +59,10 @@ def _format_call_args(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str:
 
 def _validate_dataclass_dict(cls: type[Any], data: dict[Any, Any]) -> None:
     """Validate a dictionary against dataclass field types in strict mode."""
-    hints = get_type_hints(cls)
+    try:
+        hints = get_type_hints(cls)
+    except (NameError, TypeError):
+        hints = getattr(cls, "__annotations__", {})
     for field in fields(cls):
         field_name = field.name
         if field_name not in data:
@@ -68,6 +71,21 @@ def _validate_dataclass_dict(cls: type[Any], data: dict[Any, Any]) -> None:
             continue
         field_type = hints.get(field_name, Any)
         TypeAdapter(field_type).validate_python(data[field_name], strict=True)
+
+
+def _validate_typeddict(tp: type[Any], data: dict[Any, Any]) -> None:
+    """Validate a dictionary against TypedDict field types in strict mode."""
+    try:
+        hints = get_type_hints(tp)
+    except (NameError, TypeError):
+        hints = getattr(tp, "__annotations__", {})
+    required: frozenset[str] = getattr(tp, "__required_keys__", frozenset(hints.keys()))
+    for key, field_type in hints.items():
+        if key not in data:
+            if key in required:
+                raise ValueError(f"Missing required TypedDict key '{key}'")
+            continue
+        TypeAdapter(field_type).validate_python(data[key], strict=True)
 
 
 def validate_signature(
@@ -123,21 +141,30 @@ def validate_return_type(
     if interaction.raised_exception is not None:
         return []
 
-    # If the contract has no return adapter, nothing to validate
-    if contract.return_adapter is None:
+    ret_type = contract.return_type
+    is_td = is_typeddict(ret_type)
+    # If the contract has no return adapter and is not a TypedDict, nothing to validate
+    if contract.return_adapter is None and not is_td:
         return []
 
     val: Any = interaction.returned_value
     val_obj: object = val
 
     try:
-        if (
+        if is_td and isinstance(ret_type, type):
+            if not isinstance(val, dict):
+                type_name = getattr(ret_type, "__name__", str(ret_type))
+                raise TypeError(
+                    f"Expected dict for TypedDict {type_name}, got {type(val).__name__}"
+                )
+            _validate_typeddict(ret_type, val)  # pyright: ignore[reportUnknownArgumentType] - pyright narrows Any to dict[Unknown, Unknown]
+        elif (
             is_dataclass(contract.return_type)
             and isinstance(contract.return_type, type)
             and isinstance(val, dict)
         ):
             _validate_dataclass_dict(contract.return_type, val)  # pyright: ignore[reportUnknownArgumentType] - pyright narrows Any to dict[Unknown, Unknown]
-        else:
+        elif contract.return_adapter is not None:
             contract.return_adapter.validate_python(val, strict=True)
     except (ValidationError, TypeError, ValueError) as exc:
         expected_desc = getattr(contract.return_type, "__name__", str(contract.return_type))

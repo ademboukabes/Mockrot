@@ -85,9 +85,9 @@ def _resolve_return_type(
     real_fn: Any, underlying: Any
 ) -> tuple[Any | None, TypeAdapter[Any] | None]:
     """Resolve return type annotation and compile its Pydantic TypeAdapter."""
-    mod_name = getattr(underlying, "__module__", "")
-    mod = sys.modules.get(mod_name)
-    globalns = getattr(mod, "__dict__", None)
+    globalns: dict[str, Any] | None = getattr(underlying, "__globals__", None) or getattr(
+        sys.modules.get(getattr(underlying, "__module__", "")), "__dict__", None
+    )
 
     ret = _resolve_type_hints_return(real_fn, globalns)
     if ret is None and underlying is not real_fn:
