@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from mockrot.interceptor import install_interceptor, uninstall_interceptor
+
 if TYPE_CHECKING:
     import pytest
 
@@ -29,11 +31,21 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Configure Mockrot markers and session setup."""
+    """Configure Mockrot markers, session setup, and install interceptor if enabled."""
     config.addinivalue_line(
         "markers",
         "mockrot_ignore: ignore Mockrot contract validation for marked test item.",
     )
+    mode: str | None = config.getoption("mockrot_mode")
+    if mode:
+        # Active interception listener (wired to validation in upcoming stages)
+        install_interceptor(lambda _: None)
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Clean up and restore original patch methods at session teardown."""
+    del config
+    uninstall_interceptor()
 
 
 def pytest_report_header(config: pytest.Config) -> list[str]:
