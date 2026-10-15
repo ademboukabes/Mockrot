@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 
 class ViolationKind(str, Enum):
@@ -42,3 +43,16 @@ class Contract:
     target_name: str
     is_async: bool
     has_return_annotation: bool
+
+
+@dataclass(frozen=True, slots=True)
+class MockInteraction:
+    """Details of a single call interaction intercepted on a mock."""
+
+    site: MockSite
+    target_func: Any
+    target_name: str
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+    returned_value: Any = None
+    raised_exception: BaseException | None = None

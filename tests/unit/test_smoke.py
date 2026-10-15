@@ -7,12 +7,14 @@ import importlib
 import pytest
 
 import mockrot
+import mockrot.models
 from mockrot.errors import ContractValidationError, MockrotError
 from mockrot.models import MockSite, Violation, ViolationKind
 
 
 def test_exposes_version_when_package_is_imported() -> None:
     importlib.reload(mockrot)
+    importlib.reload(mockrot.models)
     assert isinstance(mockrot.__version__, str)
     assert mockrot.__version__ == "0.1.0"
 

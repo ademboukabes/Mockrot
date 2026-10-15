@@ -6,7 +6,12 @@ import importlib
 from unittest.mock import MagicMock
 
 import mockrot.plugin
-from mockrot.plugin import pytest_addoption, pytest_configure, pytest_report_header
+from mockrot.plugin import (
+    pytest_addoption,
+    pytest_configure,
+    pytest_report_header,
+    pytest_unconfigure,
+)
 
 importlib.reload(mockrot.plugin)
 
@@ -25,6 +30,7 @@ def test_registers_mockrot_cli_group_when_addoption_called() -> None:
 
 def test_registers_marker_when_configure_called() -> None:
     config = MagicMock()
+    config.getoption.return_value = None
 
     pytest_configure(config)
 
@@ -50,3 +56,30 @@ def test_omits_header_when_mode_is_inactive() -> None:
     header = pytest_report_header(config)
 
     assert header == []
+
+
+def test_installs_interceptor_when_mockrot_mode_active() -> None:
+    config = MagicMock()
+    config.getoption.return_value = "warn"
+
+    mock_install: MagicMock = MagicMock()
+    orig = mockrot.plugin.install_interceptor
+    mockrot.plugin.install_interceptor = mock_install
+    try:
+        pytest_configure(config)
+        assert mock_install.call_count == 1
+    finally:
+        mockrot.plugin.install_interceptor = orig
+
+
+def test_uninstalls_interceptor_when_session_unconfigures() -> None:
+    config = MagicMock()
+
+    mock_uninstall: MagicMock = MagicMock()
+    orig = mockrot.plugin.uninstall_interceptor
+    mockrot.plugin.uninstall_interceptor = mock_uninstall
+    try:
+        pytest_unconfigure(config)
+        assert mock_uninstall.call_count == 1
+    finally:
+        mockrot.plugin.uninstall_interceptor = orig

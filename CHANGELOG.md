@@ -15,3 +15,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Standalone CLI entry point `mockrot` delegating to pytest.
 - Strict `pyright` and `ruff` configurations.
 - Matrix CI workflow across Python 3.10 to 3.13.
+- Transparent mock interception layer (F1) capturing `unittest.mock._patch` (`@patch`, `with patch`, `start()`) and `MonkeyPatch.setattr`.
+- Reentrancy protection and caller frame resolution for actionable `MockSite` localization.
