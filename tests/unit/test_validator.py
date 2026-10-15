@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import importlib
 import inspect
+from dataclasses import dataclass
+from typing import TypedDict
+
+from pydantic import BaseModel
 
 import mockrot.validator
 from mockrot.models import Contract, MockInteraction, MockSite, ViolationKind
@@ -92,7 +96,7 @@ def test_validate_signature_detects_missing_keyword_only_arg() -> None:
         target_name="tests.sample_api_call",
         args=("search",),
         kwargs={},  # missing required keyword-only 'timeout'
-        returned_value=None,
+        returned_value={"query": "search", "timeout": "10"},
     )
     violations = validate_interaction(interaction)
     assert len(violations) == 1
@@ -166,6 +170,7 @@ def test_validate_signature_valid_calls_produce_zero_violations() -> None:
             target_name="tests.UserService.get_user",
             args=(42,),
             kwargs={"include_roles": True},
+            returned_value="42:True",
         )
     )
     assert v3 == []
@@ -277,3 +282,232 @@ def test_validate_signature_with_none_signature_in_contract() -> None:
         kwargs={},
     )
     assert validate_signature(interaction, contract) == []
+
+
+# --- Return type validation tests (F3) ---
+
+
+class SampleUserModel(BaseModel):
+    id: int
+    name: str
+
+
+@dataclass
+class SamplePoint:
+    x: int
+    y: int
+
+
+class SampleConfig(TypedDict):
+    timeout: float
+    retries: int
+
+
+def returns_int(x: int) -> int:
+    return x
+
+
+def returns_user() -> SampleUserModel:
+    return SampleUserModel(id=1, name="alice")
+
+
+def returns_point() -> SamplePoint:
+    return SamplePoint(1, 2)
+
+
+def returns_config() -> SampleConfig:
+    return {"timeout": 1.5, "retries": 3}
+
+
+def returns_optional(flag: bool) -> int | None:
+    return 10 if flag else None
+
+
+def test_validate_return_type_strict_scalar_mismatch() -> None:
+    # Function returns int, mock returns string "5000"
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_int,
+        target_name="tests.returns_int",
+        args=(1,),
+        kwargs={},
+        returned_value="5000",
+    )
+    violations = validate_interaction(interaction)
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.kind == ViolationKind.RETURN_TYPE_DRIFT
+    assert "int" in v.expected.lower()
+    assert "str: '5000'" in v.actual
+
+
+def test_validate_return_type_strict_scalar_valid() -> None:
+    # Function returns int, mock returns int 5000
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_int,
+        target_name="tests.returns_int",
+        args=(1,),
+        kwargs={},
+        returned_value=5000,
+    )
+    assert validate_interaction(interaction) == []
+
+
+def test_validate_return_type_pydantic_model_mismatch() -> None:
+    # Pydantic model requires int id, mock passes string id
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_user,
+        target_name="tests.returns_user",
+        args=(),
+        kwargs={},
+        returned_value={"id": "5000", "name": "alice"},
+    )
+    violations = validate_interaction(interaction)
+    assert len(violations) == 1
+    assert violations[0].kind == ViolationKind.RETURN_TYPE_DRIFT
+
+
+def test_validate_return_type_pydantic_model_valid() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_user,
+        target_name="tests.returns_user",
+        args=(),
+        kwargs={},
+        returned_value={"id": 5000, "name": "alice"},
+    )
+    assert validate_interaction(interaction) == []
+
+
+def test_validate_return_type_dataclass_dict() -> None:
+    # 1. Valid dict
+    v_ok = validate_interaction(
+        MockInteraction(
+            site=make_site(),
+            target_func=returns_point,
+            target_name="tests.returns_point",
+            args=(),
+            kwargs={},
+            returned_value={"x": 10, "y": 20},
+        )
+    )
+    assert v_ok == []
+
+    # 2. Type mismatch inside dict
+    v_bad = validate_interaction(
+        MockInteraction(
+            site=make_site(),
+            target_func=returns_point,
+            target_name="tests.returns_point",
+            args=(),
+            kwargs={},
+            returned_value={"x": "10", "y": 20},
+        )
+    )
+    assert len(v_bad) == 1
+    assert v_bad[0].kind == ViolationKind.RETURN_TYPE_DRIFT
+
+
+def test_validate_return_type_typeddict() -> None:
+    # 1. Valid dict
+    v_ok = validate_interaction(
+        MockInteraction(
+            site=make_site(),
+            target_func=returns_config,
+            target_name="tests.returns_config",
+            args=(),
+            kwargs={},
+            returned_value={"timeout": 5.0, "retries": 3},
+        )
+    )
+    assert v_ok == []
+
+    # 2. Invalid field type
+    v_bad = validate_interaction(
+        MockInteraction(
+            site=make_site(),
+            target_func=returns_config,
+            target_name="tests.returns_config",
+            args=(),
+            kwargs={},
+            returned_value={"timeout": "5.0", "retries": 3},
+        )
+    )
+    assert len(v_bad) == 1
+    assert v_bad[0].kind == ViolationKind.RETURN_TYPE_DRIFT
+
+
+def test_validate_return_type_optional_and_union() -> None:
+    # Valid None
+    assert (
+        validate_interaction(
+            MockInteraction(
+                site=make_site(),
+                target_func=returns_optional,
+                target_name="tests.returns_optional",
+                args=(False,),
+                kwargs={},
+                returned_value=None,
+            )
+        )
+        == []
+    )
+
+    # Valid int
+    assert (
+        validate_interaction(
+            MockInteraction(
+                site=make_site(),
+                target_func=returns_optional,
+                target_name="tests.returns_optional",
+                args=(True,),
+                kwargs={},
+                returned_value=42,
+            )
+        )
+        == []
+    )
+
+    # Invalid str
+    v = validate_interaction(
+        MockInteraction(
+            site=make_site(),
+            target_func=returns_optional,
+            target_name="tests.returns_optional",
+            args=(True,),
+            kwargs={},
+            returned_value="42",
+        )
+    )
+    assert len(v) == 1
+    assert v[0].kind == ViolationKind.RETURN_TYPE_DRIFT
+
+
+def test_validate_return_type_ignores_simulated_exceptions() -> None:
+    # side_effect = TimeoutError(...) should not trigger return type violation
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_int,
+        target_name="tests.returns_int",
+        args=(1,),
+        kwargs={},
+        returned_value=None,
+        raised_exception=TimeoutError("gateway timeout"),
+    )
+    assert validate_interaction(interaction) == []
+
+
+def test_validate_return_type_dataclass_missing_required_field() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_point,
+        target_name="tests.returns_point",
+        args=(),
+        kwargs={},
+        returned_value={"x": 10},  # missing required 'y'
+    )
+    violations = validate_interaction(interaction)
+    assert len(violations) == 1
+    assert "Missing required dataclass field 'y'" in violations[0].message
