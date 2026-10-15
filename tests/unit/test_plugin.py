@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import importlib
+from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
+
 import mockrot.plugin
+from mockrot.models import MockSite, Violation, ViolationKind
 from mockrot.plugin import (
     pytest_addoption,
     pytest_configure,
@@ -83,3 +87,68 @@ def test_uninstalls_interceptor_when_session_unconfigures() -> None:
         assert mock_uninstall.call_count == 1
     finally:
         mockrot.plugin.uninstall_interceptor = orig
+
+
+def test_failsafe_boundary_emits_warning_on_unexpected_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = MagicMock()
+    config.getoption.return_value = "warn"
+
+    captured_cb: list[Any] = []
+
+    def fake_install(cb: Any) -> None:
+        captured_cb.append(cb)
+
+    monkeypatch.setattr(mockrot.plugin, "install_interceptor", fake_install)
+
+    def failing_validate(interaction: Any) -> list[Any]:
+        del interaction
+        raise RuntimeError("boom in validator")
+
+    monkeypatch.setattr(mockrot.plugin, "validate_interaction", failing_validate)
+
+    pytest_configure(config)
+    assert len(captured_cb) == 1
+
+    interaction = MagicMock()
+    with pytest.warns(
+        RuntimeWarning, match="Mockrot internal warning during mock validation: boom in validator"
+    ):
+        captured_cb[0](interaction)
+
+
+def test_terminal_summary_reports_violations() -> None:
+    config = MagicMock()
+    session = mockrot.plugin.MockrotSession(mode="warn")
+    session.violations.append(
+        Violation(
+            site=MockSite(file_path="test_a.py", line_number=10),
+            target_name="pkg.fn",
+            kind=ViolationKind.SIGNATURE_MISMATCH,
+            message="bad arg",
+            expected="(x: int)",
+            actual="args=()",
+        )
+    )
+    config._mockrot_session = session
+
+    terminalreporter = MagicMock()
+    mockrot.plugin.pytest_terminal_summary(terminalreporter, 0, config)
+
+    terminalreporter.section.assert_called_once_with(
+        "Mockrot: Rotting Mocks Detected", sep="=", yellow=True
+    )
+    assert terminalreporter.write_line.call_count >= 5
+
+
+def test_runtest_setup_and_teardown_tracks_current_item() -> None:
+    item = MagicMock()
+    session = mockrot.plugin.MockrotSession(mode="strict")
+    item.config._mockrot_session = session
+
+    mockrot.plugin.pytest_runtest_setup(item)
+    assert session.current_item is item
+
+    mockrot.plugin.pytest_runtest_teardown(item)
+    assert session.current_item is None

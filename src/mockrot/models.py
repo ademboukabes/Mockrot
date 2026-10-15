@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import inspect
 
 
 class ViolationKind(str, Enum):
@@ -43,6 +46,7 @@ class Contract:
     target_name: str
     is_async: bool
     has_return_annotation: bool
+    signature: inspect.Signature | None = None
 
 
 @dataclass(frozen=True, slots=True)
