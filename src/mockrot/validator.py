@@ -183,6 +183,51 @@ def validate_return_type(
     return []
 
 
+def validate_async(
+    interaction: MockInteraction,
+    contract: Contract,
+) -> list[Violation]:
+    """Validate that synchronous and asynchronous invocation conventions match target contract."""
+    # 1. Target is an async coroutine function, but interaction was synchronous
+    if contract.is_async and not interaction.is_async_call:
+        actual_desc = (
+            f"Synchronous call returning {type(interaction.returned_value).__name__}"
+            if interaction.raised_exception is None
+            else f"Synchronous call raising {type(interaction.raised_exception).__name__}"
+        )
+        return [
+            Violation(
+                site=interaction.site,
+                target_name=interaction.target_name,
+                kind=ViolationKind.ASYNC_MISMATCH,
+                message=(
+                    f"Target '{contract.target_name}' is an async coroutine function "
+                    "('async def'), but was mocked or invoked synchronously."
+                ),
+                expected="async def / coroutine function (awaited)",
+                actual=actual_desc,
+            )
+        ]
+
+    # 2. Target is a synchronous function, but interaction was asynchronous
+    if not contract.is_async and interaction.is_async_call:
+        return [
+            Violation(
+                site=interaction.site,
+                target_name=interaction.target_name,
+                kind=ViolationKind.ASYNC_MISMATCH,
+                message=(
+                    f"Target '{contract.target_name}' is a synchronous function, "
+                    "but was mocked with an AsyncMock or invoked asynchronously."
+                ),
+                expected="Synchronous function (not awaited)",
+                actual="AsyncMock / coroutine (awaited)",
+            )
+        ]
+
+    return []
+
+
 def validate_interaction(interaction: MockInteraction) -> list[Violation]:
     """Validate a mock call interaction against the target function contract."""
     if interaction.target_func is None:
@@ -191,10 +236,13 @@ def validate_interaction(interaction: MockInteraction) -> list[Violation]:
     contract = extract_contract(interaction.target_func)
     violations: list[Violation] = []
 
-    # 1. Signature validation (F2)
+    # 1. Async calling convention validation (F4)
+    violations.extend(validate_async(interaction, contract))
+
+    # 2. Signature validation (F2)
     violations.extend(validate_signature(interaction, contract))
 
-    # 2. Strict return type validation (F3)
+    # 3. Strict return type validation (F3)
     violations.extend(validate_return_type(interaction, contract))
 
     return violations

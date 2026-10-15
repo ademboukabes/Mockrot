@@ -10,9 +10,11 @@ from typing import TypedDict
 from pydantic import BaseModel
 
 import mockrot.validator
+from mockrot.extractor import extract_contract
 from mockrot.models import Contract, MockInteraction, MockSite, ViolationKind
 from mockrot.validator import (
     adjust_signature_for_call,
+    validate_async,
     validate_interaction,
     validate_signature,
 )
@@ -511,3 +513,118 @@ def test_validate_return_type_dataclass_missing_required_field() -> None:
     violations = validate_interaction(interaction)
     assert len(violations) == 1
     assert "Missing required dataclass field 'y'" in violations[0].message
+
+
+async def async_fetch_user(user_id: int) -> SampleUserModel:
+    return SampleUserModel(id=user_id, name="alice")
+
+
+async def async_calc(x: int, y: int = 10) -> int:
+    return x + y
+
+
+def test_validate_async_detects_sync_call_on_async_target() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=async_fetch_user,
+        target_name="tests.async_fetch_user",
+        args=(1,),
+        kwargs={},
+        returned_value={"id": 1, "name": "alice"},
+        is_async_call=False,
+    )
+    contract = extract_contract(async_fetch_user)
+    direct_violations = validate_async(interaction, contract)
+    assert len(direct_violations) == 1
+    assert direct_violations[0].kind == ViolationKind.ASYNC_MISMATCH
+
+    violations = validate_interaction(interaction)
+    assert any(v.kind == ViolationKind.ASYNC_MISMATCH for v in violations)
+    v_async = next(v for v in violations if v.kind == ViolationKind.ASYNC_MISMATCH)
+    assert "async def" in v_async.message
+    assert "Synchronous call" in v_async.actual
+
+
+def test_validate_async_detects_async_call_on_sync_target() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_int,
+        target_name="tests.returns_int",
+        args=(1,),
+        kwargs={},
+        returned_value=1,
+        is_async_call=True,
+    )
+    violations = validate_interaction(interaction)
+    assert len(violations) == 1
+    assert violations[0].kind == ViolationKind.ASYNC_MISMATCH
+    assert "synchronous function" in violations[0].message
+
+
+def test_validate_async_valid_call_passes() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=async_calc,
+        target_name="tests.async_calc",
+        args=(5,),
+        kwargs={"y": 20},
+        returned_value=25,
+        is_async_call=True,
+    )
+    assert validate_interaction(interaction) == []
+
+
+def test_validate_async_valid_pydantic_return_passes() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=async_fetch_user,
+        target_name="tests.async_fetch_user",
+        args=(42,),
+        kwargs={},
+        returned_value={"id": 42, "name": "bob"},
+        is_async_call=True,
+    )
+    assert validate_interaction(interaction) == []
+
+
+def test_validate_async_detects_return_type_drift_after_await() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=async_calc,
+        target_name="tests.async_calc",
+        args=(5,),
+        kwargs={},
+        returned_value="25",  # string instead of int
+        is_async_call=True,
+    )
+    violations = validate_interaction(interaction)
+    assert len(violations) == 1
+    assert violations[0].kind == ViolationKind.RETURN_TYPE_DRIFT
+
+
+def test_validate_async_detects_signature_mismatch_on_async_call() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=async_calc,
+        target_name="tests.async_calc",
+        args=(),  # missing required positional arg 'x'
+        kwargs={},
+        returned_value=10,
+        is_async_call=True,
+    )
+    violations = validate_interaction(interaction)
+    assert len(violations) == 1
+    assert violations[0].kind == ViolationKind.SIGNATURE_MISMATCH
+
+
+def test_validate_async_ignores_simulated_exception_on_async_call() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=async_calc,
+        target_name="tests.async_calc",
+        args=(5,),
+        kwargs={},
+        raised_exception=ConnectionResetError("lost connection"),
+        is_async_call=True,
+    )
+    assert validate_interaction(interaction) == []

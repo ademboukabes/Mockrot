@@ -15,6 +15,7 @@ class ViolationKind(str, Enum):
 
     SIGNATURE_MISMATCH = "signature_mismatch"
     RETURN_TYPE_DRIFT = "return_type_drift"
+    ASYNC_MISMATCH = "async_mismatch"
     ZOMBIE_FIELD = "zombie_field"
 
 
@@ -62,3 +63,4 @@ class MockInteraction:
     kwargs: dict[str, Any]
     returned_value: Any = None
     raised_exception: BaseException | None = None
+    is_async_call: bool = False
