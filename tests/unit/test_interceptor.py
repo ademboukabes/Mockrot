@@ -295,3 +295,46 @@ def test_failsafe_recovers_gracefully_when_internal_inspection_raises(
         res = compute_total(5, 5)
 
     assert res == 123
+
+
+def test_intercepts_async_callable_when_monkeypatched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[MockInteraction] = []
+    install_interceptor(captured.append)
+
+    async def fake_status(endpoint: str) -> str:
+        return f"fake:{endpoint}"
+
+    monkeypatch.setattr(f"{__name__}.fetch_status", fake_status)
+
+    async def _run() -> str:
+        return await fetch_status("/health")
+
+    res = asyncio.run(_run())
+    assert res == "fake:/health"
+    assert len(captured) == 1
+    assert captured[0].is_async_call is True
+    assert captured[0].returned_value == "fake:/health"
+
+
+def test_intercepts_async_callable_when_it_raises_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[MockInteraction] = []
+    install_interceptor(captured.append)
+
+    async def failing_status(endpoint: str) -> str:
+        raise ConnectionResetError(f"connection dropped at {endpoint}")
+
+    monkeypatch.setattr(f"{__name__}.fetch_status", failing_status)
+
+    async def _run() -> None:
+        await fetch_status("/down")
+
+    with pytest.raises(ConnectionResetError, match="connection dropped"):
+        asyncio.run(_run())
+
+    assert len(captured) == 1
+    assert captured[0].is_async_call is True
+    assert isinstance(captured[0].raised_exception, ConnectionResetError)

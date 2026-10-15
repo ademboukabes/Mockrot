@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import sys
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -109,6 +110,7 @@ def _wrap_mock_object(mock_obj: Any, orig_target: Any, target_name: str) -> None
                             kwargs=kwargs,
                             returned_value=None,
                             raised_exception=exc,
+                            is_async_call=True,
                         )
                     )
                     raise
@@ -122,6 +124,7 @@ def _wrap_mock_object(mock_obj: Any, orig_target: Any, target_name: str) -> None
                             kwargs=kwargs,
                             returned_value=result,
                             raised_exception=None,
+                            is_async_call=True,
                         )
                     )
                     return result
@@ -152,6 +155,7 @@ def _wrap_mock_object(mock_obj: Any, orig_target: Any, target_name: str) -> None
                             kwargs=kwargs,
                             returned_value=None,
                             raised_exception=exc,
+                            is_async_call=False,
                         )
                     )
                     raise
@@ -165,6 +169,7 @@ def _wrap_mock_object(mock_obj: Any, orig_target: Any, target_name: str) -> None
                             kwargs=kwargs,
                             returned_value=result,
                             raised_exception=None,
+                            is_async_call=False,
                         )
                     )
                     return result
@@ -179,6 +184,51 @@ def _wrap_plain_callable(func: Any, orig_target: Any, target_name: str) -> Any:
     """Wrap a non-Mock callable (e.g. lambda or dummy function) with interception."""
     if getattr(func, "__mockrot_wrapped__", False):
         return func
+
+    if inspect.iscoroutinefunction(func):
+
+        async def async_callable_wrapper(*args: Any, **kwargs: Any) -> Any:
+            if _is_active() or _STATE.listener is None:
+                return await func(*args, **kwargs)
+
+            site = _resolve_mock_site()
+            _TLS.active = True
+            try:
+                try:
+                    result = await func(*args, **kwargs)
+                except BaseException as exc:
+                    _STATE.listener(
+                        MockInteraction(
+                            site=site,
+                            target_func=orig_target,
+                            target_name=target_name,
+                            args=args,
+                            kwargs=kwargs,
+                            returned_value=None,
+                            raised_exception=exc,
+                            is_async_call=True,
+                        )
+                    )
+                    raise
+                else:
+                    _STATE.listener(
+                        MockInteraction(
+                            site=site,
+                            target_func=orig_target,
+                            target_name=target_name,
+                            args=args,
+                            kwargs=kwargs,
+                            returned_value=result,
+                            raised_exception=None,
+                            is_async_call=True,
+                        )
+                    )
+                    return result
+            finally:
+                _TLS.active = False
+
+        async_callable_wrapper.__mockrot_wrapped__ = True  # type: ignore[attr-defined]
+        return async_callable_wrapper
 
     def callable_wrapper(*args: Any, **kwargs: Any) -> Any:
         if _is_active() or _STATE.listener is None:
@@ -199,6 +249,7 @@ def _wrap_plain_callable(func: Any, orig_target: Any, target_name: str) -> Any:
                         kwargs=kwargs,
                         returned_value=None,
                         raised_exception=exc,
+                        is_async_call=False,
                     )
                 )
                 raise
@@ -212,6 +263,7 @@ def _wrap_plain_callable(func: Any, orig_target: Any, target_name: str) -> Any:
                         kwargs=kwargs,
                         returned_value=result,
                         raised_exception=None,
+                        is_async_call=False,
                     )
                 )
                 return result
@@ -262,9 +314,23 @@ def _patched_monkeypatch_setattr(
 
     try:
         if real_value is mock.DEFAULT:
-            # Dotted import path style handled directly
-            pass
-        elif isinstance(real_name, str):
+            # Dotted import path style: monkeypatch.setattr("pkg.mod.func", replacement)
+            if isinstance(real_target, str) and "." in real_target:
+                mod_name, attr = real_target.rsplit(".", 1)
+                try:
+                    mod = sys.modules.get(mod_name) or __import__(mod_name, fromlist=[attr])
+                    orig_target = getattr(mod, attr, None)
+                    target_name = real_target
+                    if hasattr(real_name, "_mock_call"):
+                        _wrap_mock_object(real_name, orig_target, target_name)
+                    elif callable(real_name) and callable(orig_target):
+                        real_name = _wrap_plain_callable(real_name, orig_target, target_name)
+                except Exception:  # noqa: BLE001
+                    pass
+            _STATE.orig_monkeypatch_setattr(self, real_target, real_name, raising=raising)
+            return
+
+        if isinstance(real_name, str):
             orig_target = getattr(real_target, real_name, None)
             target_name = _get_target_name(real_target, real_name)
 
@@ -275,7 +341,7 @@ def _patched_monkeypatch_setattr(
     except Exception:  # noqa: BLE001
         pass
 
-    _STATE.orig_monkeypatch_setattr(self, real_target, real_name, real_value, raising)
+    _STATE.orig_monkeypatch_setattr(self, real_target, real_name, real_value, raising=raising)
 
 
 def is_interceptor_installed() -> bool:
