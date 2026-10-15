@@ -47,6 +47,8 @@ class Contract:
     is_async: bool
     has_return_annotation: bool
     signature: inspect.Signature | None = None
+    return_type: Any | None = None
+    return_adapter: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)

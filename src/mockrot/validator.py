@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from dataclasses import MISSING, fields, is_dataclass
+from typing import TYPE_CHECKING, Any, get_type_hints
+
+from pydantic import TypeAdapter, ValidationError
 
 from mockrot.extractor import extract_contract
 from mockrot.models import Contract, MockInteraction, Violation, ViolationKind
@@ -54,6 +57,19 @@ def _format_call_args(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str:
     return ", ".join(parts) if parts else "no arguments"
 
 
+def _validate_dataclass_dict(cls: type[Any], data: dict[Any, Any]) -> None:
+    """Validate a dictionary against dataclass field types in strict mode."""
+    hints = get_type_hints(cls)
+    for field in fields(cls):
+        field_name = field.name
+        if field_name not in data:
+            if field.default is MISSING and field.default_factory is MISSING:
+                raise ValueError(f"Missing required dataclass field '{field_name}'")
+            continue
+        field_type = hints.get(field_name, Any)
+        TypeAdapter(field_type).validate_python(data[field_name], strict=True)
+
+
 def validate_signature(
     interaction: MockInteraction,
     contract: Contract,
@@ -98,6 +114,48 @@ def validate_signature(
     return []
 
 
+def validate_return_type(
+    interaction: MockInteraction,
+    contract: Contract,
+) -> list[Violation]:
+    """Validate that the value returned by the mock strictly satisfies the return type contract."""
+    # Mocks raising an exception simulate error states; return type is not applicable
+    if interaction.raised_exception is not None:
+        return []
+
+    # If the contract has no return adapter, nothing to validate
+    if contract.return_adapter is None:
+        return []
+
+    val: Any = interaction.returned_value
+    val_obj: object = val
+
+    try:
+        if (
+            is_dataclass(contract.return_type)
+            and isinstance(contract.return_type, type)
+            and isinstance(val, dict)
+        ):
+            _validate_dataclass_dict(contract.return_type, val)  # pyright: ignore[reportUnknownArgumentType] - pyright narrows Any to dict[Unknown, Unknown]
+        else:
+            contract.return_adapter.validate_python(val, strict=True)
+    except (ValidationError, TypeError, ValueError) as exc:
+        expected_desc = getattr(contract.return_type, "__name__", str(contract.return_type))
+        actual_desc = f"{type(val_obj).__name__}: {val_obj!r}"
+        return [
+            Violation(
+                site=interaction.site,
+                target_name=interaction.target_name,
+                kind=ViolationKind.RETURN_TYPE_DRIFT,
+                message=str(exc),
+                expected=expected_desc,
+                actual=actual_desc,
+            )
+        ]
+
+    return []
+
+
 def validate_interaction(interaction: MockInteraction) -> list[Violation]:
     """Validate a mock call interaction against the target function contract."""
     if interaction.target_func is None:
@@ -108,5 +166,8 @@ def validate_interaction(interaction: MockInteraction) -> list[Violation]:
 
     # 1. Signature validation (F2)
     violations.extend(validate_signature(interaction, contract))
+
+    # 2. Strict return type validation (F3)
+    violations.extend(validate_return_type(interaction, contract))
 
     return violations

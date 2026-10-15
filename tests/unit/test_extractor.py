@@ -6,6 +6,8 @@ import importlib
 import inspect
 from typing import Any
 
+from pydantic import BaseModel
+
 import mockrot.extractor
 from mockrot.extractor import clear_extractor_cache, extract_contract
 
@@ -51,6 +53,8 @@ def test_extract_contract_for_standard_function() -> None:
     assert contract.is_async is False
     assert contract.has_return_annotation is True
     assert contract.signature is not None
+    assert contract.return_type is str
+    assert contract.return_adapter is not None
 
     params = list(contract.signature.parameters.keys())
     assert params == ["user_id", "flag"]
@@ -63,6 +67,8 @@ def test_extract_contract_for_async_function() -> None:
     assert contract.is_async is True
     assert contract.has_return_annotation is True
     assert contract.signature is not None
+    assert contract.return_type == list[str]
+    assert contract.return_adapter is not None
     assert list(contract.signature.parameters.keys()) == ["query", "limit"]
 
 
@@ -72,6 +78,8 @@ def test_extract_contract_without_return_annotation() -> None:
 
     assert contract.has_return_annotation is False
     assert contract.signature is not None
+    assert contract.return_type is None
+    assert contract.return_adapter is None
     assert list(contract.signature.parameters.keys()) == ["a", "b"]
 
 
@@ -150,3 +158,45 @@ def test_extract_contract_handles_none_or_non_callable() -> None:
     contract = extract_contract(None)
     assert contract.signature is None
     assert contract.target_name == "unknown"
+    assert contract.return_type is None
+    assert contract.return_adapter is None
+
+
+def test_extract_contract_for_pydantic_model_return() -> None:
+    class UserDTO(BaseModel):
+        id: int
+        name: str
+
+    def get_user() -> UserDTO:
+        return UserDTO(id=1, name="alice")
+
+    clear_extractor_cache()
+    contract = extract_contract(get_user)
+    assert contract.return_type is UserDTO
+    assert contract.return_adapter is not None
+
+
+def test_extract_contract_for_void_function_has_no_adapter() -> None:
+    def void_func() -> None:
+        pass
+
+    clear_extractor_cache()
+    contract = extract_contract(void_func)
+    # Void function: return_type is None, adapter is None
+    assert contract.return_type is None
+    assert contract.return_adapter is None
+
+
+class GlobalPayload(BaseModel):
+    token: str
+
+
+def func_with_string_annotation() -> GlobalPayload:
+    return GlobalPayload(token="tok")
+
+
+def test_extract_contract_resolves_string_annotation_via_globals() -> None:
+    clear_extractor_cache()
+    contract = extract_contract(func_with_string_annotation)
+    assert contract.return_type is GlobalPayload
+    assert contract.return_adapter is not None
