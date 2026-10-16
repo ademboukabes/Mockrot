@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import types
+import typing
+from collections.abc import Iterable, Sequence
 from dataclasses import MISSING, fields, is_dataclass
-from typing import TYPE_CHECKING, Any, get_type_hints, is_typeddict
+from typing import TYPE_CHECKING, Any, get_args, get_origin, get_type_hints, is_typeddict
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from mockrot.extractor import extract_contract
 from mockrot.models import Contract, MockInteraction, Violation, ViolationKind
@@ -232,6 +235,168 @@ def validate_async(
     return []
 
 
+def _extract_basemodel_metadata(
+    tp: type[BaseModel],
+) -> tuple[set[str], str, dict[str, Any], bool]:
+    allowed: set[str] = set()
+    nested_types: dict[str, Any] = {}
+    for name, field_info in tp.model_fields.items():
+        allowed.add(name)
+        if field_info.alias:
+            allowed.add(field_info.alias)
+        if isinstance(field_info.validation_alias, str):
+            allowed.add(field_info.validation_alias)
+        if field_info.annotation is not None:
+            nested_types[name] = field_info.annotation
+            if field_info.alias:
+                nested_types[field_info.alias] = field_info.annotation
+    config: object = getattr(tp, "model_config", None)
+    allows_extra: bool = False
+    if isinstance(config, dict):
+        extra_val: object = typing.cast("dict[str, object]", config).get("extra")
+        allows_extra = extra_val == "allow"
+    return allowed, tp.__name__, nested_types, allows_extra
+
+
+def _extract_dataclass_metadata(
+    tp: type[Any],
+) -> tuple[set[str], str, dict[str, Any], bool]:
+    try:
+        hints = get_type_hints(tp)
+    except (NameError, TypeError):
+        hints = getattr(tp, "__annotations__", {})
+    allowed = {f.name for f in fields(tp)}
+    nested_types = {f.name: hints.get(f.name, Any) for f in fields(tp)}
+    return allowed, tp.__name__, nested_types, False
+
+
+def _extract_typeddict_metadata(
+    tp: type[Any],
+) -> tuple[set[str], str, dict[str, Any], bool]:
+    try:
+        hints = get_type_hints(tp)
+    except (NameError, TypeError):
+        hints = getattr(tp, "__annotations__", {})
+    allowed = set(hints.keys()) | set(getattr(tp, "__annotations__", {}).keys())
+    nested_types = dict(hints)
+    name = getattr(tp, "__name__", str(tp))
+    return allowed, name, nested_types, False
+
+
+def _extract_schema_metadata(
+    tp: Any,
+) -> tuple[set[str], str, dict[str, Any], bool] | None:
+    """Extract declared field names, aliases, and nested field types from schema contracts."""
+    origin = get_origin(tp)
+    if origin in (types.UnionType, typing.Union):
+        for arg in get_args(tp):
+            if arg is not type(None):
+                res = _extract_schema_metadata(arg)
+                if res is not None:
+                    return res
+        return None
+
+    if isinstance(tp, type):
+        tp_cls = typing.cast("type[Any]", tp)
+        if issubclass(tp_cls, BaseModel):
+            return _extract_basemodel_metadata(tp_cls)
+        if is_dataclass(tp_cls):
+            return _extract_dataclass_metadata(tp_cls)
+        if is_typeddict(tp_cls):
+            return _extract_typeddict_metadata(tp_cls)
+
+    return None
+
+
+def _collect_zombie_fields(
+    data: dict[str, Any],
+    schema_tp: Any,
+    prefix: str = "",
+) -> list[tuple[str, str, Any, set[str]]]:
+    """Recursively identify keys in data not declared on the target schema contract."""
+    meta = _extract_schema_metadata(schema_tp)
+    if meta is None:
+        return []
+
+    allowed_keys, type_name, nested_types, allows_extra = meta
+    if allows_extra:
+        return []
+
+    zombies: list[tuple[str, str, Any, set[str]]] = []
+
+    for key, value in data.items():
+        key_str = str(key)
+        field_path = f"{prefix}.{key_str}" if prefix else key_str
+
+        if key_str not in allowed_keys:
+            zombies.append((field_path, type_name, value, allowed_keys))
+        elif isinstance(value, dict):
+            if key_str in nested_types:
+                dict_val = typing.cast("dict[str, Any]", value)
+                zombies.extend(_collect_zombie_fields(dict_val, nested_types[key_str], field_path))
+        elif isinstance(value, (list, tuple)) and key_str in nested_types:
+            seq_val = typing.cast("Sequence[Any]", value)
+            container_origin = get_origin(nested_types[key_str])
+            if container_origin in (list, tuple, Sequence, Iterable):
+                args = get_args(nested_types[key_str])
+                if args:
+                    item_type = args[0]
+                    for idx, item in enumerate(seq_val):
+                        if isinstance(item, dict):
+                            item_dict = typing.cast("dict[str, Any]", item)
+                            zombies.extend(
+                                _collect_zombie_fields(item_dict, item_type, f"{field_path}[{idx}]")
+                            )
+
+    return zombies
+
+
+def validate_zombie_fields(
+    interaction: MockInteraction,
+    contract: Contract,
+) -> list[Violation]:
+    """Validate that mocked dictionaries do not contain obsolete or unknown zombie fields."""
+    if interaction.raised_exception is not None or contract.return_type is None:
+        return []
+
+    val: Any = interaction.returned_value
+    zombies: list[tuple[str, str, Any, set[str]]] = []
+
+    if isinstance(val, dict):
+        val_dict = typing.cast("dict[str, Any]", val)
+        zombies.extend(_collect_zombie_fields(val_dict, contract.return_type))
+    elif isinstance(val, (list, tuple)):
+        val_seq = typing.cast("Sequence[Any]", val)
+        origin = get_origin(contract.return_type)
+        if origin in (list, tuple, Sequence, Iterable):
+            args = get_args(contract.return_type)
+            if args:
+                item_schema = args[0]
+                for idx, item in enumerate(val_seq):
+                    if isinstance(item, dict):
+                        item_dict = typing.cast("dict[str, Any]", item)
+                        zombies.extend(_collect_zombie_fields(item_dict, item_schema, f"[{idx}]"))
+
+    violations: list[Violation] = []
+    for field_path, type_name, actual_val, allowed_keys in zombies:
+        sorted_keys = ", ".join(f"'{k}'" for k in sorted(allowed_keys))
+        violations.append(
+            Violation(
+                site=interaction.site,
+                target_name=interaction.target_name,
+                kind=ViolationKind.ZOMBIE_FIELD,
+                message=(
+                    f"Zombie field '{field_path}' detected in mocked dictionary for {type_name}. "
+                    "This field is not declared on the production contract."
+                ),
+                expected=f"Declared fields of {type_name}: [{sorted_keys}]",
+                actual=f"Unexpected key '{field_path}' with value {actual_val!r}",
+            )
+        )
+
+    return violations
+
+
 def validate_interaction(interaction: MockInteraction) -> list[Violation]:
     """Validate a mock call interaction against the target function contract."""
     if interaction.target_func is None:
@@ -248,5 +413,8 @@ def validate_interaction(interaction: MockInteraction) -> list[Violation]:
 
     # 3. Strict return type validation (F3)
     violations.extend(validate_return_type(interaction, contract))
+
+    # 4. Zombie field detection in mocked dicts (F6)
+    violations.extend(validate_zombie_fields(interaction, contract))
 
     return violations
