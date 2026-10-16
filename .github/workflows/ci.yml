@@ -42,3 +42,6 @@ jobs:
 
       - name: Run test suite with coverage
         run: uv run pytest --cov=mockrot --cov-branch --cov-report=term-missing --cov-fail-under=90
+
+      - name: Build distribution package
+        run: uv build

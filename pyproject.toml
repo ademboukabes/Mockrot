@@ -5,25 +5,39 @@ build-backend = "hatchling.build"
 [project]
 name = "pytest-mockrot"
 version = "0.1.0"
-description = "Detect rotting mocks by validating call signatures and return types against real contracts"
+description = "Detect rotting mocks by validating call signatures, return types, and zombie fields against real contracts"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [
-    { name = "Adem", email = "adem@mockrot.dev" },
+    { name = "Adem Boukabes", email = "adamboukabes1@gmail.com" },
 ]
-keywords = ["pytest", "mock", "testing", "typing", "pydantic", "contracts"]
+maintainers = [
+    { name = "Adem Boukabes", email = "adamboukabes1@gmail.com" },
+]
+keywords = [
+    "pytest",
+    "mock",
+    "testing",
+    "typing",
+    "pydantic",
+    "contracts",
+    "rot",
+    "qa",
+]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Framework :: Pytest",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Quality Assurance",
     "Typing :: Typed",
 ]
 dependencies = [
@@ -31,6 +45,13 @@ dependencies = [
     "pytest>=8.0.0",
     "rich>=13.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ademboukabes/Mockrot"
+Documentation = "https://github.com/ademboukabes/Mockrot#readme"
+Repository = "https://github.com/ademboukabes/Mockrot.git"
+Issues = "https://github.com/ademboukabes/Mockrot/issues"
+Changelog = "https://github.com/ademboukabes/Mockrot/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 fix = [
