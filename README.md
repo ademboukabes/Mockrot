@@ -88,7 +88,7 @@ poetry add --group dev pytest-mockrot
 Or run directly without installing using `uvx`:
 
 ```bash
-uvx mockrot
+uvx --from pytest-mockrot mockrot
 ```
 
 ---
@@ -177,16 +177,6 @@ exclude_targets = [
 ]
 ```
 
----
-
-## Real-World Battle Tested
-
-Mockrot is battle-tested against real production projects:
-- **Starlette (ASGI Framework):** 476 tests passed in 1.16s with zero false positives and compatibility with async blocking I/O detectors (`blockbuster`).
-- **Production FastAPI & Pydantic Microservices:** Validated across asynchronous database calls, MinIO S3 clients, Google Drive OAuth integrations, and background workers.
-
----
-
 ## Comparison
 
 | Feature | `unittest.mock` | `unittest.mock(autospec=True)` | `pytest-mockrot` |
@@ -202,7 +192,7 @@ Mockrot is battle-tested against real production projects:
 
 ## Contributing
 
-We welcome contributions! Please see [AGENTS.md](./AGENTS.md) for architecture rules, technical invariants, and coding standards.
+We welcome contributions! Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for local setup, testing, and contribution guidelines.
 
 ```bash
 # Clone the repository
