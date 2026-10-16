@@ -2,18 +2,65 @@
 
 from __future__ import annotations
 
+import inspect
+import linecache
 import warnings
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from mockrot.interceptor import install_interceptor, uninstall_interceptor
-from mockrot.models import Violation
+from mockrot.models import MockSite, Violation
+from mockrot.reporter import (
+    format_terminal_summary,
+    format_violation_for_strict,
+)
 from mockrot.validator import validate_interaction
 
 if TYPE_CHECKING:
     from mockrot.models import MockInteraction
+
+
+def _is_site_ignored(site: MockSite | Any) -> bool:
+    """Return True if the source line where the mock was called or defined is ignored."""
+    file_path = getattr(site, "file_path", None)
+    line_number = getattr(site, "line_number", None)
+    if not isinstance(file_path, str) or not isinstance(line_number, int) or line_number <= 0:
+        return False
+    try:
+        line = linecache.getline(file_path, line_number)
+        if "mockrot: ignore" in line or "mockrot:ignore" in line:
+            return True
+        if line_number > 1:
+            prev = linecache.getline(file_path, line_number - 1)
+            if "mockrot: ignore" in prev or "mockrot:ignore" in prev:
+                return True
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
+def _is_item_ignored(item: pytest.Item | Any) -> bool:
+    """Return True if active test item has exemption marker or decorator with # mockrot: ignore."""
+    if item is None:
+        return False
+    marker_getter = getattr(item, "get_closest_marker", None)
+    if callable(marker_getter) and marker_getter("mockrot_ignore") is not None:
+        return True
+    try:
+        obj = getattr(item, "obj", None)
+        if obj is not None and callable(obj):
+            lines, _ = inspect.getsourcelines(obj)
+            for line in lines:
+                stripped = line.strip()
+                if "mockrot: ignore" in stripped or "mockrot:ignore" in stripped:
+                    return True
+                if stripped.startswith("def ") or stripped.startswith("async def "):
+                    break
+    except Exception:  # noqa: BLE001
+        return False
+    return False
 
 
 @dataclass
@@ -61,9 +108,9 @@ def pytest_configure(config: pytest.Config) -> None:
 
     def on_interaction(interaction: MockInteraction) -> None:
         try:
-            # Check if active test item has exemption marker
+            # Check if active test item or call site has exemption
             item = session.current_item
-            if item is not None and item.get_closest_marker("mockrot_ignore") is not None:
+            if _is_item_ignored(item) or _is_site_ignored(interaction.site):
                 return
 
             violations = validate_interaction(interaction)
@@ -74,15 +121,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
             if session.mode == "strict":
                 first = violations[0]
-                fail_msg = (
-                    f"\nMockrot detected rotting mock ({first.kind.value}):\n"
-                    f"  Target:   {first.target_name}\n"
-                    f"  Site:     {first.site.file_path}:{first.site.line_number}\n"
-                    f"  Error:    {first.message}\n"
-                    f"  Expected: {first.expected}\n"
-                    f"  Actual:   {first.actual}"
-                )
-                pytest.fail(fail_msg, pytrace=False)
+                pytest.fail(format_violation_for_strict(first), pytrace=False)
         except Exception as exc:  # noqa: BLE001 - Invariant 1: fail-safe boundary to never crash user tests
             warnings.warn(
                 f"Mockrot internal warning during mock validation: {exc}",
@@ -117,25 +156,26 @@ def pytest_runtest_teardown(item: pytest.Item) -> None:
 def pytest_terminal_summary(
     terminalreporter: pytest.TerminalReporter, exitstatus: int, config: pytest.Config
 ) -> None:
-    """Display summary of rotting mocks in warn mode."""
+    """Display summary of rotting mocks in warn mode via Rich reporter."""
     del exitstatus
     session: MockrotSession | None = getattr(config, "_mockrot_session", None)
     if session is None or not session.violations:
         return
 
     terminalreporter.section("Mockrot: Rotting Mocks Detected", sep="=", yellow=True)
-    for v in session.violations:
-        terminalreporter.write_line(
-            f"  [{v.kind.value}] {v.target_name} at {v.site.file_path}:{v.site.line_number}"
-        )
-        terminalreporter.write_line(f"    Expected: {v.expected}")
-        terminalreporter.write_line(f"    Actual:   {v.actual}")
-        terminalreporter.write_line(f"    Error:    {v.message}")
 
-    count = len(session.violations)
-    terminalreporter.write_line(
-        f"\n{count} rotting mock(s) detected. Fix these mocks to prevent false positives in CI."
+    hasmarkup = getattr(terminalreporter, "hasmarkup", False)
+    raw_collected = getattr(terminalreporter, "_numcollected", None)
+    total_collected = raw_collected if isinstance(raw_collected, int) else len(session.violations)
+
+    summary_text = format_terminal_summary(
+        violations=session.violations,
+        total_tests=total_collected,
+        force_terminal=bool(hasmarkup),
     )
+
+    for line in summary_text.splitlines():
+        terminalreporter.write_line(line)
 
 
 def pytest_report_header(config: pytest.Config) -> list[str]:
