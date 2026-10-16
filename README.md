@@ -1,11 +1,11 @@
 # Mockrot (`pytest-mockrot`)
 
-[![PyPI version](https://img.shields.io/pypi/v/pytest-mockrot.svg?color=blue)](https://pypi.org/project/pytest-mockrot/)
-[![Python versions](https://img.shields.io/pypi/pyversions/pytest-mockrot.svg)](https://pypi.org/project/pytest-mockrot/)
-[![CI Status](https://github.com/ademboukabes/Mockrot/actions/workflows/ci.yml/badge.svg)](https://github.com/ademboukabes/Mockrot/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
-[![Type checker: pyright strict](https://img.shields.io/badge/types-pyright%20strict-blue.svg)](https://github.com/microsoft/pyright)
+[![PyPI version](https://img.shields.io/pypi/v/pytest-mockrot?logo=pypi&logoColor=white&color=3775A9)](https://pypi.org/project/pytest-mockrot/)
+[![Python versions](https://img.shields.io/pypi/pyversions/pytest-mockrot?logo=python&logoColor=white&color=3776AB)](https://pypi.org/project/pytest-mockrot/)
+[![CI Status](https://github.com/ademboukabes/Mockrot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ademboukabes/Mockrot/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg?logo=ruff&logoColor=white)](https://github.com/astral-sh/ruff)
+[![Type checker: pyright strict](https://img.shields.io/badge/types-pyright%20strict-2C67B2.svg)](https://github.com/microsoft/pyright)
 
 **Mockrot** is a `pytest` plugin that detects **rotting mocks** : unit test mocks whose call signatures, return types, or dictionary payloads have silently drifted away from real production contracts.
 
