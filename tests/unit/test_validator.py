@@ -628,3 +628,111 @@ def test_validate_async_ignores_simulated_exception_on_async_call() -> None:
         is_async_call=True,
     )
     assert validate_interaction(interaction) == []
+
+
+def test_side_effect_iterable_all_valid() -> None:
+    values = [10, 20, 30]
+    for val in values:
+        interaction = MockInteraction(
+            site=make_site(),
+            target_func=returns_int,
+            target_name="tests.returns_int",
+            args=(val,),
+            kwargs={},
+            returned_value=val,
+        )
+        assert validate_interaction(interaction) == []
+
+
+def test_side_effect_iterable_detects_drift_on_specific_call() -> None:
+    calls = [100, "string_is_invalid", 300]
+    results = [
+        validate_interaction(
+            MockInteraction(
+                site=make_site(),
+                target_func=returns_int,
+                target_name="tests.returns_int",
+                args=(1,),
+                kwargs={},
+                returned_value=c,
+            )
+        )
+        for c in calls
+    ]
+    # First call valid
+    assert results[0] == []
+    # Second call detects drift
+    assert len(results[1]) == 1
+    assert results[1][0].kind == ViolationKind.RETURN_TYPE_DRIFT
+    # Third call valid
+    assert results[2] == []
+
+
+def test_side_effect_iterable_mixed_with_raised_exceptions() -> None:
+    # 1. Normal return
+    v1 = validate_interaction(
+        MockInteraction(
+            site=make_site(),
+            target_func=returns_int,
+            target_name="tests.returns_int",
+            args=(1,),
+            kwargs={},
+            returned_value=10,
+        )
+    )
+    assert v1 == []
+
+    # 2. Raised exception (e.g. mock.side_effect = [10, TimeoutError("timed out")])
+    v2 = validate_interaction(
+        MockInteraction(
+            site=make_site(),
+            target_func=returns_int,
+            target_name="tests.returns_int",
+            args=(1,),
+            kwargs={},
+            returned_value=None,
+            raised_exception=TimeoutError("timed out"),
+        )
+    )
+    assert v2 == []
+
+
+def test_side_effect_callable_returning_exception_instance_is_immune() -> None:
+    # When a custom side_effect callable returns an Exception instance to simulate error
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_int,
+        target_name="tests.returns_int",
+        args=(1,),
+        kwargs={},
+        returned_value=ValueError("simulated error value"),
+    )
+    assert validate_interaction(interaction) == []
+
+
+def test_side_effect_callable_returning_exception_class_is_immune() -> None:
+    # When a custom side_effect callable returns an Exception class
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_int,
+        target_name="tests.returns_int",
+        args=(1,),
+        kwargs={},
+        returned_value=KeyError,
+    )
+    assert validate_interaction(interaction) == []
+
+
+def test_side_effect_callable_returning_invalid_scalar_triggers_drift() -> None:
+    # Custom side_effect callable returning invalid type
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_int,
+        target_name="tests.returns_int",
+        args=(5,),
+        kwargs={},
+        returned_value="bad_return",
+    )
+    violations = validate_interaction(interaction)
+    assert len(violations) == 1
+    assert violations[0].kind == ViolationKind.RETURN_TYPE_DRIFT

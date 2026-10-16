@@ -150,12 +150,16 @@ def validate_return_type(
     val: Any = interaction.returned_value
     val_obj: object = val
 
+    # Exceptions (instances and classes) simulate error conditions and are always legitimate (F5)
+    if isinstance(val, BaseException) or (isinstance(val, type) and issubclass(val, BaseException)):
+        return []
+
     try:
         if is_td and isinstance(ret_type, type):
             if not isinstance(val, dict):
                 type_name = getattr(ret_type, "__name__", str(ret_type))
                 raise TypeError(
-                    f"Expected dict for TypedDict {type_name}, got {type(val).__name__}"
+                    f"Expected dict for TypedDict {type_name}, got {type(val_obj).__name__}"
                 )
             _validate_typeddict(ret_type, val)  # pyright: ignore[reportUnknownArgumentType] - pyright narrows Any to dict[Unknown, Unknown]
         elif (
