@@ -1,103 +1,100 @@
 # AGENTS.md — Mockrot
 
-> **Source unique de vérité** pour tout agent IA (Claude Code, Antigravity, Cursor, Codex…) et tout
-> contributeur humain. La spécification produit complète se trouve dans
-> [`cahierdecharge.md`](./cahierdecharge.md). Ce fichier définit **comment** on travaille ; le cahier
-> des charges définit **quoi** construire.
+> **Single Source of Truth** for all AI agents (Claude Code, Antigravity, Cursor, Codex, Windsurf)
+> and human contributors. The full historical product specification is located at
+> [`docs/spec/v1-specification.md`](./docs/spec/v1-specification.md). This document defines
+> **how** we work; the specification defines **what** to build.
 >
-> **Règle d'or :** en cas d'ambiguïté, de contradiction ou de décision structurante non couverte ici,
-> **s'arrêter et demander** plutôt que supposer.
+> **Golden Rule:** In case of ambiguity, contradiction, or structural decisions not covered here,
+> **stop and ask** rather than assume.
 
 ---
 
-## 1. Contexte du projet
+## 1. Project Context & Philosophy
 
-**Mockrot** (`pytest-mockrot`) est un plugin `pytest` qui détecte les **mocks obsolètes
-(« Rotting Mocks »)** : des mocks dont les arguments d'appel ou les valeurs de retour ne
-correspondent plus au contrat réel (signature + type de retour) du code de production.
+**Mockrot** (`pytest-mockrot`) is a pytest plugin designed to detect **rotting mocks**: test mocks
+whose call arguments or return values have drifted away from the actual production contract
+(function signature and return type annotations).
 
-- **Le problème :** `unittest.mock` (même avec `autospec=True`) ne valide jamais que `return_value`
-  respecte l'annotation `-> ReturnType` de la vraie fonction. Les tests restent verts sur des données
-  figées depuis des mois, la prod casse (`AttributeError`, `KeyError`, `ValidationError`).
-- **La solution :** intercepter chaque mock, extraire le contrat de la cible réelle
-  (`inspect.signature` + `typing.get_type_hints`), et valider **entrées ET sorties** à chaque appel
-  via `pydantic.TypeAdapter`.
-- **Promesse produit :** zéro configuration (`pytest --mockrot`), zéro faux positif bruyant,
-  overhead négligeable, ne casse jamais la suite de l'utilisateur.
-- **Cible :** projets Python 3.10+ typés (Pydantic, dataclass, TypedDict), et garde-fou pour le code
-  généré/refactoré par des agents IA.
+- **The Problem:** `unittest.mock` (even with `autospec=True`) never verifies that `return_value`
+  matches the annotated return type `-> ReturnType` of the real function. Test suites remain green
+  on frozen, obsolete fake data for months until production breaks with `AttributeError`, `KeyError`,
+  or `ValidationError`.
+- **The Solution:** Intercept every mock, extract the runtime contract of the real underlying target
+  (`inspect.signature` + `typing.get_type_hints`), and validate **both inputs and outputs** on every
+  call using `pydantic.TypeAdapter`.
+- **Product Promise:** Zero configuration (`pytest --mockrot`), zero noisy false positives,
+  negligible overhead, and never crashes the user's test suite.
+- **Target Audience:** Modern Python 3.10+ typed codebases (Pydantic, dataclasses, TypedDict) and an
+  essential safety rail for AI-generated or AI-refactored code.
 
-### Périmètre
+### Scope
 
-| Version | Exigences | Contenu |
+| Version | Requirements | Deliverables |
 | :--- | :--- | :--- |
-| **V1 (MVP)** | F1 → F8 | Interception, validation signature, validation retour, async, `side_effect`, champs zombies, modes `warn`/`strict`, exemptions |
-| **V1.1** | F9 → F12 | Mode record (`.mockrot.lock`), mocks HTTP/OpenAPI, auto-fixer LibCST, export GitHub/JSON |
+| **V1 (MVP)** | F1 → F8 | Interception, signature validation, return validation, async support, `side_effect`, zombie fields, `warn`/`strict` modes, exclusions |
+| **V1.1** | F9 → F12 | Record mode (`.mockrot.lock`), HTTP/OpenAPI mocks, LibCST auto-fixer, GitHub Action/JSON export |
 
-**Ne jamais implémenter une exigence V1.1 tant que la V1 n'est pas livrée et validée**, sauf demande
-explicite.
-
-### Plan de réalisation
-
-1. **Semaine 1 :** bootstrap du dépôt, `interceptor`, `extractor`, `validator`, support async.
-2. **Semaine 2 :** champs zombies, sous-mocks `MagicMock`, `reporter` Rich.
-3. **Semaine 3 :** `recorder`, export GitHub, démo, publication PyPI v0.1.0.
+**Never implement a V1.1 requirement before V1 is fully completed and verified**, unless explicitly
+requested.
 
 ---
 
-## 2. Stack technique
+## 2. Technical Stack
 
-| Rôle | Outil | Contrainte |
+| Role | Tool | Constraint |
 | :--- | :--- | :--- |
-| Langage | Python | `>= 3.10` (CI : 3.10 → 3.13) |
-| Projet & build | `uv` + `hatchling` | `pyproject.toml` PEP 621, `src-layout`, `uv.lock` versionné |
-| Plugin | `pytest` | `>= 8.0`, entry-point `pytest11` |
-| Validation | `pydantic` v2 | `TypeAdapter` uniquement, jamais d'API v1 |
-| Rendu terminal | `rich` | Uniquement dans `reporter.py` |
-| Auto-fixer | `libcst` | Extra optionnel `pytest-mockrot[fix]` (dépendance lourde) |
-| Lint & format | `ruff` | Zéro warning |
-| Typage | `pyright` mode **strict** | Zéro erreur |
-| Tests | `pytest`, `pytester`, `pytest-cov`, `pytest-mock` | Couverture ≥ 90 % (lignes + branches) |
+| Language | Python | `>= 3.10` (CI matrix: 3.10 → 3.13) |
+| Project & Build | `uv` + `hatchling` | `pyproject.toml` PEP 621, `src-layout`, locked `uv.lock` |
+| Test Framework | `pytest` | `>= 8.0`, entry point `pytest11` |
+| Contract Validation | `pydantic` v2 | `TypeAdapter` only, never use deprecated v1 APIs |
+| Terminal Reporter | `rich` | Restricted exclusively to `reporter.py` |
+| Auto-Fixer | `libcst` | Optional extra `pytest-mockrot[fix]` (heavy dependency) |
+| Linting & Formatting | `ruff` | Zero warnings allowed |
+| Type Checking | `pyright` in **strict** mode | Zero errors allowed |
+| Test Suite | `pytest`, `pytester`, `pytest-cov`, `pytest-mock` | Code coverage ≥ 90% (lines + branches) |
 
-- Nom de distribution : `pytest-mockrot` — package importable : `mockrot`.
-- **Aucune nouvelle dépendance runtime** sans justification écrite et validation explicite. Chaque
-  dépendance runtime est un coût imposé à tous les utilisateurs.
+- Distribution name: `pytest-mockrot` — importable module: `mockrot`.
+- **No new runtime dependencies** without written justification and explicit approval. Every runtime
+  dependency incurs an overhead cost for all downstream users.
 
 ---
 
 ## 3. Architecture
 
-### Pipeline
+### Processing Pipeline
 
 ```text
 pytest ──▶ plugin.py ──▶ interceptor.py ──▶ extractor.py ──▶ validator.py ──▶ reporter.py
-           (hooks)       (capture cible)    (contrat)        (violations)     (affichage)
+           (hooks)       (mock capture)     (contract)       (violations)     (terminal/export)
 ```
 
-### Responsabilités et règles de dépendance
+### Module Responsibilities and Import Boundaries
 
-| Module | Responsabilité | Peut importer |
+| Module | Responsibility | Allowed Imports |
 | :--- | :--- | :--- |
-| `plugin.py` | Hooks pytest, options CLI, config `[tool.mockrot]`, **seule frontière fail-safe** | tout |
-| `interceptor.py` | Wrap de `unittest.mock._patch` et `MonkeyPatch.setattr`, proxy d'appel | `extractor`, `validator`, `models` |
-| `extractor.py` | Signature, type hints, `ForwardRef`/`TYPE_CHECKING`, async, cache | `models` |
-| `validator.py` | Validation des arguments et du retour, champs zombies | `extractor`, `models` |
-| `reporter.py` | Rendu Rich, export JSON / SARIF / GitHub | `models` |
-| `recorder.py` | Enregistrement d'empreintes `.mockrot.lock` (V1.1) | `models` |
-| `fixer.py` | Réécriture LibCST (V1.1) | `models` |
-| `models.py` | Types de domaine (`Contract`, `Violation`, `MockSite`…) en `dataclass(frozen=True, slots=True)` | stdlib uniquement |
+| `plugin.py` | Pytest hooks, CLI flags, `[tool.mockrot]` config, **sole fail-safe boundary** | Any project module |
+| `interceptor.py` | Patching `unittest.mock._patch` and `MonkeyPatch.setattr`, call proxy | `extractor`, `validator`, `models` |
+| `extractor.py` | Signature extraction, type hints, `ForwardRef`/`TYPE_CHECKING` resolution, async checks, contract cache | `models` |
+| `validator.py` | Validation of arguments and return values, zombie field detection | `extractor`, `models` |
+| `reporter.py` | Rich console rendering, JSON / SARIF / GitHub annotations export | `models` |
+| `recorder.py` | Contract snapshot recording for `.mockrot.lock` (V1.1) | `models` |
+| `fixer.py` | LibCST mock rewrite engine (V1.1) | `models` |
+| `models.py` | Domain models (`Contract`, `Violation`, `MockSite`…) using `@dataclass(frozen=True, slots=True)` | Standard library only |
 
-Règles :
+Rules:
 
-- **Seul `plugin.py` importe `pytest`.** Le cœur (`extractor`, `validator`) est testable sans pytest.
-- **Seul `reporter.py` importe `rich`.** Seul `fixer.py` importe `libcst`.
-- **Seul `interceptor.py` touche aux API privées** (`unittest.mock._patch`). Toute dépendance à une
-  API privée est isolée, commentée, et testée sur toute la matrice Python.
-- Les modules communiquent via les types de `models.py`, jamais via des `str` ou des `dict` ad hoc.
-- Pas de dépendance circulaire. Pas d'état global mutable, sauf le registre de session explicitement
-  créé et détruit par `plugin.py`.
+- **Only `plugin.py` imports `pytest`.** The core engine (`extractor`, `validator`) must remain
+  testable without pytest.
+- **Only `reporter.py` imports `rich`.** Only `fixer.py` imports `libcst`.
+- **Only `interceptor.py` accesses private internals** (`unittest.mock._patch`). Any dependency on
+  private runtime APIs must be isolated, documented, and tested across Python 3.10 through 3.13.
+- Modules communicate exclusively through strongly-typed domain objects in `models.py`, never via
+  untyped `dict` or ad-hoc tuples.
+- No circular imports. No mutable global state, except the session registry managed exclusively by
+  `plugin.py`.
 
-### Structure cible du dépôt
+### Repository Structure
 
 ```text
 mockrot/
@@ -105,264 +102,197 @@ mockrot/
 ├── uv.lock
 ├── AGENTS.md / CLAUDE.md / README.md / CHANGELOG.md / LICENSE
 ├── .github/workflows/ci.yml
+├── docs/spec/v1-specification.md
 ├── src/mockrot/
 │   ├── __init__.py  plugin.py  interceptor.py  extractor.py
-│   ├── validator.py  reporter.py  models.py  errors.py
+│   ├── validator.py  reporter.py  models.py  errors.py  cli.py
 │   ├── recorder.py  fixer.py          # V1.1
 │   └── py.typed
 └── tests/
-    ├── unit/            # cœur pur, sans plugin pytest
-    ├── integration/     # plugin de bout en bout via la fixture `pytester`
-    └── fixtures/        # faux modules « production » (sync, async, pydantic, dataclass, TypedDict…)
+    ├── unit/            # Pure engine tests, executed without pytest plugin hooks
+    ├── integration/     # End-to-end plugin tests using pytester fixture
+    └── fixtures/        # Mock production modules (sync, async, pydantic, dataclasses, TypedDict)
 ```
 
-Toute déviation par rapport à cette structure doit être justifiée et validée.
+---
+
+## 4. Non-Negotiable Product Invariants
+
+1. **Never crash the user's test suite.** Any unexpected internal error must be caught at the
+   **single fail-safe boundary** in `plugin.py`, converted into a warning or degraded mode notice,
+   allowing the underlying test to run normally.
+2. **Total behavioral transparency.** The proxy wrapper must never alter the returned value,
+   raise an unexpected exception, or distort the mock's behavior. In `warn` mode, tests must behave
+   identically with or without Mockrot active.
+3. **Zero overhead when disabled.** When `--mockrot` is not provided, no runtime hooks are installed
+   and no expensive modules are imported. All installed patches must be restored idempotently at the
+   end of the test session.
+4. **False negative > False positive.** When in doubt (unresolvable type, unavailable signature,
+   dynamic target), silently fallback to degraded mode. User trust is the primary asset.
+5. **Zero configuration required.** The plugin must work out-of-the-box without requiring a
+   `[tool.mockrot]` section. Configuration exists solely for fine-tuning.
+6. **Strict performance budget.** Contracts and `TypeAdapter` instances must be compiled
+   **only once per target**. Pure validation overhead must stay below **15 ms** across 500 tests
+   (hard ceiling: 50 ms total test suite overhead). Every regression must be profiled.
+7. **Every violation must be actionable.** Reports must include the exact mock site (file and line),
+   target symbol, real contract, and a clear diff of the offending argument or return value.
 
 ---
 
-## 4. Invariants produit (non négociables)
+## 5. Known Technical Gotchas
 
-1. **Ne jamais faire planter la suite de tests de l'utilisateur.** Toute erreur interne est capturée
-   à une **unique frontière** dans `plugin.py`, convertie en avertissement « mode dégradé », et le test
-   continue normalement.
-2. **Transparence totale.** Le proxy ne modifie jamais la valeur retournée, l'exception levée, ni le
-   comportement du mock. En mode `warn`, un test doit produire exactement le même résultat avec ou
-   sans Mockrot.
-3. **Zéro effet de bord quand désactivé.** Sans `--mockrot`, aucun patch n'est installé, aucun import
-   coûteux n'est effectué. Tous les patchs sont restaurés en fin de session, de manière idempotente.
-4. **Faux négatif > faux positif.** En cas de doute (type non résolu, signature indisponible, cible
-   dynamique), on passe en mode dégradé silencieux. La confiance est le produit.
-5. **Zéro configuration.** Tout fonctionne sans `[tool.mockrot]`. La config ne fait qu'affiner.
-6. **Budget de performance.** Contrats et `TypeAdapter` compilés **une seule fois par cible**.
-   Objectif : overhead < 15 ms sur 500 tests (seuil d'alerte : 50 ms). Toute régression est mesurée.
-7. **Chaque violation est actionnable.** Fichier + ligne du mock, cible, contrat réel, et diff précis.
+- **`_patch.start()` is insufficient.** `@patch` as a decorator and `with patch(...)` both invoke
+  `_patch.__enter__` (which in turn calls `start()`). Intercepting `__enter__` is mandatory to cover
+  decorators, context managers, and `pytest-mock` (`mocker.patch`).
+- **Pydantic lax mode yields false negatives.** `validate_python("5000", strict=False)` coerces
+  `"5000"` into `5000` for an `int`. Mocked values must be validated with **`strict=True`**, with
+  explicit handling for necessary structural conversions (e.g. `dict` passed to a Pydantic model).
+- **Zombie fields detection.** `TypeAdapter(BaseModel)` ignores extraneous dictionary keys by
+  default. Never mutate the user's model configuration: compute obsolete keys independently
+  (`model_fields`, aliases, `TypedDict.__annotations__` / `__required_keys__`).
+- **Caching strategy.** Standard `lru_cache` fails on unhashable callables, and caching by `id()` is
+  bug-prone due to garbage collection ID reuse. Use a robust identity cache (`WeakKeyDictionary`
+  with fallback) and preserve `lru_cache` for hashable targets.
+- **Handling `self` and `cls`.** Use `inspect.getattr_static` to differentiate functions,
+  `staticmethod`, `classmethod`, and bound instance methods, stripping the leading receiver before
+  calling `bind()`.
+- **Iterable `side_effect`.** Never exhaust generators or iterators in advance: validate each yielded
+  value at the moment it is retrieved. Exceptions (both exception classes and instances) are always
+  legitimate return paths.
+- **`AsyncMock` validation.** Always validate the **resolved return value after `await`**, never the
+  coroutine object itself.
+- **Pre-specified mocks.** When `autospec=True` or `spec=` is already set on a mock, do not duplicate
+  signature errors already raised natively by `unittest.mock`.
+- **Non-callable targets.** When patching a class, module, constant, or property: explicitly extract
+  the instantiation contract (e.g., class constructor `__init__`) or safely ignore unsupported targets.
+- **`monkeypatch.setattr` with real callables.** Patching an attribute with a lambda or custom
+  function must undergo the exact same signature and return validation via a transparent wrapper.
+- **`ForwardRef` and `TYPE_CHECKING`.** Resolve forward references via the target module's
+  `globalns`, falling back to cached AST inspection if necessary. On resolution failure, degrade
+  gracefully without raising an exception.
+- **`inspect.stack()` vs `sys._getframe()`.** `inspect.stack()` performs blocking `os.stat` calls
+  on source files across the entire call stack, breaking async test suites that forbid blocking I/O
+  (e.g., Starlette's `blockbuster.BlockingError`) and causing massive CPU overhead. Always use
+  `sys._getframe()` for fast, in-memory frame inspection without disk I/O.
+- **Pytest internal runner monkeypatching.** Internal plugins such as `pytest-asyncio` monkeypatch
+  `item.obj` to synchronize coroutine tests. The `_patched_monkeypatch_setattr` hook must ignore
+  internal runner packages (`pytest_asyncio`, `_pytest`, `pluggy`) to avoid treating test runner
+  internals as user mocks.
+- **No emojis.** Never use emojis in code, docstrings, terminal outputs, or documentation. Maintain
+  clean, professional ASCII/Unicode typography.
 
----
-
-## 5. Pièges techniques connus (à lire avant de coder)
-
-Le code de la §6 du cahier des charges est **indicatif**, pas à copier tel quel. Points identifiés :
-
-- **`_patch.start()` ne suffit pas.** `@patch` en décorateur et `with patch(...)` passent par
-  `_patch.__enter__` (que `start()` appelle). Il faut intercepter `__enter__` pour couvrir les trois
-  usages et `pytest-mock`.
-- **Mode lax de Pydantic = faux négatifs.** `validate_python("5000", strict=False)` accepte `"5000"`
-  pour un `int`. Le rapport attendu signale ce cas comme « Type mismatch » : la validation des valeurs
-  mockées doit être **stricte** (`strict=True`), avec les adaptations nécessaires (ex. `dict` → modèle).
-- **Champs zombies.** `TypeAdapter(BaseModel)` ignore les clés en trop par défaut. Ne **jamais**
-  muter la config du modèle utilisateur : calculer les clés obsolètes séparément (`model_fields`,
-  alias, `TypedDict.__annotations__` / `__required_keys__`).
-- **Cache.** `lru_cache` sur `real_fn` échoue sur les callables non hashables, et un cache par
-  `id()` est faux (réutilisation des `id` après GC). Utiliser un cache par identité robuste
-  (`WeakKeyDictionary` avec repli) et garder `lru_cache` pour les cas hashables.
-- **`self` / `cls`.** Utiliser `inspect.getattr_static` pour distinguer fonction, `staticmethod`,
-  `classmethod`, méthode liée ; ajuster la signature avant `bind()`.
-- **`side_effect` itérable.** Ne jamais consommer l'itérateur par anticipation : valider chaque
-  valeur au moment où elle est produite. Exceptions (classes **et** instances) = toujours légitimes.
-- **`AsyncMock`.** Valider la valeur **résolue après `await`**, jamais la coroutine.
-- **Mocks déjà spécifiés.** `autospec=True` / `spec=` : ne pas dupliquer les erreurs de signature
-  déjà levées par `unittest.mock`.
-- **Cibles non fonctionnelles.** Patch d'une classe, d'une constante, d'une propriété, d'un module :
-  définir le contrat explicitement (ex. classe → `__init__` + instance) ou ignorer proprement.
-- **`monkeypatch.setattr` avec un vrai callable** (lambda, fonction factice) : même validation que
-  pour un `Mock`, via un wrapper transparent.
-- **`ForwardRef` / `TYPE_CHECKING`.** Résolution via le `globalns` du module, puis repli AST isolé
-  et mis en cache. Échec → mode dégradé, jamais d'exception.
-- **`pytest-xdist`.** Le rapport doit à terme agréger les résultats des workers : ne pas coder un
-  registre qui suppose un processus unique sans l'isoler derrière une interface.
-
-- **`inspect.stack()` vs `sys._getframe`.** `inspect.stack()` effectue des appels `os.stat`
-  sur chaque fichier de la pile pour lire le code source, ce qui brise les suites asynchrones
-  vérifiant les I/O bloquantes (ex. `blockbuster.BlockingError` dans Starlette) et introduit un
-  surcoût majeur. Utiliser `sys._getframe()` pour une inspection purement mémoire sans I/O.
-- **Plugins pytest internes utilisant `MonkeyPatch.setattr`.** `pytest-asyncio` monkeypatche
-  `item.obj` pour synchroniser l'exécution des tests coroutines. Le hook `_patched_monkeypatch_setattr`
-  doit ignorer les appels issus des plugins internes de test runner (`pytest_asyncio`, `_pytest`,
-  `pluggy`) pour ne pas valider à tort les fonctions de test elles-mêmes comme des mocks.
-
-Tout nouveau piège découvert est **ajouté à cette section** dans le même commit que son correctif.
+Any newly discovered technical gotcha must be **documented in this section** in the same commit as
+its fix.
 
 ---
 
-## 6. Méthode de travail (niveau senior)
+## 6. Senior Engineering Workflow
 
-### Cycle pour chaque tâche
+### Development Cycle for Every Task
 
-1. **Comprendre** — relire l'exigence (F-ID) dans le cahier des charges, lire le code existant
-   concerné, identifier les cas limites. Reformuler l'objectif en une phrase.
-2. **Planifier** — pour toute tâche touchant plus d'un module ou l'API publique : présenter un plan
-   court (fichiers impactés, approche, tests prévus, risques) et **attendre validation**.
-3. **Test rouge** — écrire d'abord le test qui échoue (détection attendue **et** absence de faux
-   positif). Pour un bug : un test qui reproduit le bug avant tout correctif.
-4. **Implémenter** — le minimum pour passer au vert. Pas de code spéculatif (YAGNI).
-5. **Refactorer** — nommage, duplication, lisibilité, sans changer le comportement.
-6. **Vérifier** — lancer la vérification complète (§10). Rien n'est « fini » sans preuve.
-7. **Commiter** — commits atomiques et propres (§8).
+1. **Understand:** Read the requirement, inspect existing code and relevant tests, and identify
+   edge cases. State the core objective clearly.
+2. **Plan:** For changes touching more than one module or the public API, formulate a brief plan
+   (impacted files, approach, proposed tests, risks).
+3. **Red Test:** Write the failing test first (including positive detection **and** negative tests
+   to prevent false positives). For bug fixes, write a reproduction test before fixing the bug.
+4. **Implement:** Write minimal, clean code to turn the test green. Avoid speculative features.
+5. **Refactor:** Improve naming, structure, and readability without altering external behavior.
+6. **Verify:** Run the full verification suite (§10). Never declare a task complete without proof.
+7. **Commit:** Produce atomic, clean Conventional Commits (§8).
 
-### Principes
+### Principles
 
-- **Petits incréments.** Une branche = un objectif. Une PR relisible en moins de 15 minutes
-  (idéalement < 400 lignes de diff hors tests et fixtures).
-- **Pas de changement hors périmètre.** Ne pas reformater, renommer ou « améliorer » du code non lié
-  à la tâche. Les améliorations repérées sont notées et proposées séparément.
-- **Lire avant d'écrire.** Réutiliser les abstractions existantes avant d'en créer de nouvelles.
-- **Décisions tracées.** Toute décision d'architecture non triviale est consignée dans
-  `docs/adr/NNNN-titre.md` (contexte, décision, alternatives, conséquences).
-- **Honnêteté.** Ne jamais affirmer qu'un test passe sans l'avoir exécuté. Signaler explicitement
-  ce qui n'a pas été vérifié, les compromis faits, et les limites connues.
-- **Dogfooding.** Dès que F1–F3 sont livrés, la suite de tests de Mockrot tourne elle-même avec
-  `--mockrot=strict` en CI.
+- **Small increments:** One branch = one objective. Keep PRs reviewable in under 15 minutes.
+- **Scope discipline:** Do not reformat, rename, or tweak unrelated code. File separate tasks for
+  orthogonal improvements.
+- **Look before leap:** Reuse existing models and utilities before introducing new abstractions.
+- **Dogfooding:** The Mockrot test suite must run with `--mockrot=strict` in CI.
 
 ---
 
-## 7. Standards de code
+## 7. Code Standards
 
-### Langue
+### Language
 
-- **Anglais** pour tout ce qui est versionné et public : code, identifiants, docstrings,
-  commentaires, messages d'erreur, commits, branches, PR, README, CHANGELOG.
-- **Français** pour les échanges avec l'utilisateur et la documentation interne (`AGENTS.md`,
-  `CLAUDE.md`, cahier des charges).
+- **English** for all version-controlled artifacts: code, symbols, docstrings, comments, error
+  messages, commits, branches, PRs, and public documentation.
+- Conversational interactions with the project maintainer may occur in French when requested.
 
-### Python
+### Python Guidelines
 
-- `from __future__ import annotations` en tête de chaque module.
-- **Typage complet**, `pyright --strict` à zéro erreur. `Any` uniquement aux frontières (valeurs
-  mockées arbitraires) et jamais propagé. `# type: ignore[code]` / `# pyright: ignore[rule]`
-  interdit sans commentaire justificatif sur la même ligne.
-- Types de domaine : `@dataclass(frozen=True, slots=True)`. Énumérations : `enum.Enum`/`StrEnum`
-  (avec repli 3.10).
-- Fonctions courtes, pures dès que possible, une seule responsabilité. Pas d'effets de bord à
-  l'import.
-- **Exceptions :** hiérarchie dédiée dans `errors.py` (`MockrotError` → …). Jamais de `except:` nu
-  ni de `except Exception` hors de la frontière fail-safe de `plugin.py` (et du repli documenté de
-  `extractor.py`). Toujours chaîner (`raise ... from exc`).
-- Pas de `print()`. Sortie utilisateur via `reporter.py` ; diagnostic interne via `logging`
-  (logger `mockrot`) ou `warnings`.
-- Docstrings style Google sur toute l'API publique et les fonctions non triviales. Les commentaires
-  expliquent le **pourquoi**, pas le quoi.
-- Pas de code mort, pas de code commenté, pas de `TODO` sans référence (`TODO(F9): ...`).
-- Ruff (base) : `E, W, F, I, B, UP, SIM, RUF, PT, N, C4, TC, ARG, BLE, ERA, PL`. Format : `ruff format`.
+- `from __future__ import annotations` at the top of every Python file.
+- **Complete type safety:** `pyright --strict` with zero errors. `Any` is restricted to external
+  mock boundaries and must never leak inward. `# type: ignore` or `# pyright: ignore` requires a
+  justification comment on the same line.
+- Domain objects: `@dataclass(frozen=True, slots=True)`.
+- Short, pure, single-responsibility functions. No import-time side effects.
+- **Error handling:** Dedicated exception hierarchy in `errors.py` inheriting from `MockrotError`.
+  Never use bare `except:` or catch unhandled generic `Exception` outside the fail-safe boundary in
+  `plugin.py`. Always chain exceptions with `from exc`.
+- No `print()` calls. User output belongs in `reporter.py`; internal diagnostics belong in standard
+  `logging` (`logging.getLogger("mockrot")`) or warnings.
+- Google-style docstrings on all public APIs and non-trivial helpers. Comments explain the **why**,
+  not the what.
+- Ruff rules: `E, W, F, I, B, UP, SIM, RUF, PT, N, C4, TC, ARG, BLE, ERA, PL`.
 
 ---
 
-## 8. Workflow Git
+## 8. Git Workflow & Conventions
 
 ### Branches
 
-- **`main`** : protégée, toujours verte, toujours publiable. **Aucun commit direct.** Historique
-  **linéaire** (pas de merge commits).
-- Branches courtes (durée de vie ≤ 2–3 jours), créées depuis `main` à jour :
+- **`main`**: Protected, always green, production-ready. Linear history only.
+- Feature branches: `<type>/<scope-or-fid>-<kebab-case-description>`
+  (e.g., `feat/signature-validation`, `fix/async-mock-inspection`).
+
+### Conventional Commits 1.0
 
 ```text
-<type>/<scope-ou-fid>-<description-kebab-case>
+<type>(<scope>): <imperative summary in lowercase without trailing period, <= 72 chars>
 
-feat/f2-signature-validation
-feat/f4-async-mock-support
-fix/extractor-forward-ref-name-error
-refactor/validator-split-zombie-detection
-test/integration-side-effect-iterables
-ci/python-matrix
-docs/readme-quickstart
-chore/bootstrap-uv-project
+<optional body: WHY this change was made, technical context, alternatives considered.
+Wrap lines at <= 72 characters.>
+
+<optional footer: Closes #12 | Refs: F2>
 ```
 
-- Une branche = un sujet. Rebaser régulièrement : `git fetch origin && git rebase origin/main`.
-- Supprimer la branche après merge.
-
-### Commits — Conventional Commits 1.0
-
-```text
-<type>(<scope>): <résumé impératif, minuscules, sans point, ≤ 72 caractères>
-
-<corps optionnel : POURQUOI ce changement, contexte, alternatives écartées.
-Lignes ≤ 72 caractères.>
-
-<footer optionnel : Refs: F2 | Closes #12 | BREAKING CHANGE: ...>
-```
-
-- **Types :** `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`, `chore`, `style`,
-  `revert`.
-- **Scopes :** `plugin`, `interceptor`, `extractor`, `validator`, `reporter`, `recorder`, `fixer`,
-  `models`, `config`, `deps`, `ci`, `release`.
-
-Exemples :
-
-```text
-feat(interceptor): wrap _patch.__enter__ to capture original target
-fix(validator): validate scalar return values in strict mode
-test(validator): cover zombie keys on nested TypedDict
-refactor(extractor): extract self/cls stripping into dedicated helper
-perf(extractor): cache TypeAdapter per target with weak references
-build(deps): add pydantic>=2.7 as runtime dependency
-```
-
-Règles :
-
-- **Atomique :** un commit = un changement logique cohérent. Chaque commit passe la vérification
-  complète (historique *bisectable*).
-- Ne jamais mélanger refactor, formatage et changement de comportement dans le même commit.
-- Le code et ses tests vont **dans le même commit**.
-- Interdits : `wip`, `fix`, `update`, `misc`, `changes`, messages vagues ou en français.
-- Avant d'ouvrir une PR : nettoyer l'historique de **sa propre branche** (`git rebase -i`,
-  `git commit --fixup` + `--autosquash`).
-
-### Pull Requests
-
-- Titre = message Conventional Commit (il devient le commit sur `main`).
-- Description : **Quoi / Pourquoi / Comment / Comment tester / Risques**, F-ID référencée.
-- Merge uniquement si CI verte (lint, types, tests matrice, couverture). Stratégie : **squash merge**.
-
-### Releases
-
-- **SemVer** (`0.y.z` tant que l'API n'est pas stable). Tags annotés `vX.Y.Z` sur `main`.
-- `CHANGELOG.md` au format *Keep a Changelog*, alimenté depuis les commits.
-
-### Interdits absolus
-
-- `git push` sur `main`, `git push --force` (seul `--force-with-lease` sur sa propre branche, après
-  accord), `--no-verify`, réécriture d'un historique partagé.
-- `git add -A` / `git add .` à l'aveugle : ajouter des chemins explicites et relire
-  `git diff --staged` avant chaque commit.
-- Commiter des secrets, `.env`, caches (`.venv`, `__pycache__`, `.pytest_cache`, `.ruff_cache`),
-  ou des fichiers sans rapport avec la tâche.
-- Toute commande destructive (`reset --hard`, `clean -fd`, `branch -D`) sans accord explicite.
+- **Allowed Types:** `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`, `chore`,
+  `style`, `revert`.
+- **Allowed Scopes:** `plugin`, `interceptor`, `extractor`, `validator`, `reporter`, `recorder`,
+  `fixer`, `models`, `config`, `deps`, `ci`, `cli`.
+- Never commit blindly (`git add .` or `git add -A`). Review `git diff --staged` before every commit.
+- Never commit secrets, `.env`, caches, virtual environments, or unrelated files.
 
 ---
 
-## 9. Stratégie de tests
+## 9. Testing Strategy
 
-- **Unitaires (`tests/unit/`)** : `extractor`, `validator`, `models` testés en isolation, sans
-  charger le plugin.
-- **Intégration (`tests/integration/`)** : plugin de bout en bout via la fixture officielle
-  **`pytester`** (fichiers de test générés, assertions sur la sortie et le code de retour).
-- **Chaque détection a son test négatif** : un test prouvant l'absence de faux positif sur un mock
-  correct équivalent.
-- Couvrir systématiquement : fonction, méthode d'instance, `classmethod`, `staticmethod`, `async def`,
-  `BaseModel`, `dataclass`, `TypedDict`, `Union`/`Optional`, génériques, `side_effect` (itérable,
-  callable, exception), `ForwardRef`, `TYPE_CHECKING`, builtins C sans signature.
-- Noms explicites : `test_<comportement>_when_<condition>` (ex.
-  `test_reports_zombie_key_when_dict_has_removed_field`).
-- Tests déterministes, sans réseau, sans dépendance à l'ordre. Paramétrer (`pytest.mark.parametrize`)
-  plutôt que dupliquer.
-- Couverture ≥ 90 % lignes + branches sur `src/mockrot`. Pas de test écrit uniquement pour la
-  couverture.
-- Benchmark de l'overhead sur une suite synthétique de 500 tests avant chaque release.
+- **Unit tests (`tests/unit/`):** Test `extractor`, `validator`, and `models` in strict isolation
+  without initializing pytest plugin hooks.
+- **Integration tests (`tests/integration/`):** Test end-to-end plugin behavior using pytest's
+  official `pytester` fixture (generating test files, asserting on exit codes and console output).
+- **Negative test pairing:** Every positive detection test must be accompanied by an equivalent
+  negative test verifying that valid, conforming mocks produce zero warnings and zero violations.
+- Full matrix coverage: functions, bound methods, `classmethod`, `staticmethod`, `async def`,
+  Pydantic models, dataclasses, `TypedDict`, `Union`/`Optional`, generics, `side_effect` patterns,
+  forward references, and C built-ins.
+- Strict code coverage ≥ 90% (lines + branches).
 
 ---
 
-## 10. Commandes
+## 10. Verification Commands
 
 ```bash
-uv sync                                   # installer l'environnement
-uv run ruff format .                      # formater
-uv run ruff check .                       # linter (ajouter --fix si pertinent)
-uv run pyright                            # typage strict
-uv run pytest                             # tests
-uv run pytest --cov=mockrot --cov-branch  # tests + couverture
+uv sync                                   # Install all dependencies and tools
+uv run ruff format .                      # Format code
+uv run ruff check .                       # Lint code
+uv run pyright                            # Strict type checking
+uv run pytest                             # Run test suite
+uv run pytest --cov=mockrot --cov-branch  # Run tests with branch coverage
 ```
 
-**Vérification complète (obligatoire avant chaque commit) :**
+**Full mandatory verification pipeline (must pass before every commit):**
 
 ```bash
 uv run ruff format --check . && uv run ruff check . && uv run pyright && uv run pytest
@@ -372,23 +302,28 @@ uv run ruff format --check . && uv run ruff check . && uv run pyright && uv run 
 
 ## 11. Definition of Done
 
-Une tâche est terminée **uniquement si** :
+A task is considered complete **only when**:
 
-- [ ] L'exigence (F-ID) est satisfaite, cas limites inclus.
-- [ ] Tests ajoutés : cas positif **et** test négatif (pas de faux positif).
-- [ ] `ruff format`, `ruff check`, `pyright --strict`, `pytest` : tous au vert.
-- [ ] Couverture ≥ 90 % maintenue.
-- [ ] Les invariants de la §4 sont respectés (fail-safe, transparence, perf).
-- [ ] Docstrings / README / CHANGELOG mis à jour si le comportement visible change.
-- [ ] Nouveau piège technique documenté en §5 le cas échéant.
-- [ ] Commits atomiques, Conventional Commits, branche propre et rebasée sur `main`.
+- [ ] Requirement is satisfied, including edge cases and negative cases.
+- [ ] Automated tests added: positive detection and negative non-detection tests.
+- [ ] `ruff format`, `ruff check`, `pyright --strict`, and `pytest` all pass with zero errors.
+- [ ] Code coverage remains ≥ 90%.
+- [ ] Product invariants are respected (fail-safe boundary, transparency, performance).
+- [ ] Documentation, docstrings, or CHANGELOG updated if user-facing behavior changed.
+- [ ] Newly discovered technical gotchas documented in §5.
+- [ ] Clean, atomic Conventional Commit on a rebased branch.
 
 ---
 
-## 12. Décisions tranchées et actées
+## 12. Architectural Decisions Record (ADR)
 
-- **CLI autonome** : module léger `cli.py` (point d'entrée console `mockrot = "mockrot.cli:main"` dans `pyproject.toml`) qui délègue à `pytest` avec `--mockrot` activé, garantissant le fonctionnement sans friction de `uvx mockrot`.
-- **Budget de performance** : overhead du moteur de validation pur ciblé à **< 15 ms** sur 500 tests ; seuil d'alerte global de la suite de tests (incluant le rapport terminal Rich) fixé à **< 50 ms**.
-- **Mode `accessed-only`** : planifié pour la V1.1 (`--mockrot-mode=accessed-only`) pour éliminer le bruit sur les vieilles bases de code sans compliquer le MVP V1.
-- **LibCST** : confirmé en extra optionnel `pytest-mockrot[fix]` pour garder le package principal ultraléger.
-- **Licence** : licence **MIT**.
+- **Standalone CLI:** Lightweight `cli.py` module (console script `mockrot = "mockrot.cli:main"` in
+  `pyproject.toml`) delegating to `pytest` with `--mockrot` enabled, supporting `uvx mockrot` out of
+  the box.
+- **Performance Budget:** Pure validation engine overhead targeted at **< 15 ms** over 500 tests;
+  global test suite threshold (including Rich console rendering) set at **< 50 ms**.
+- **Accessed-Only Mode:** Scheduled for V1.1 (`--mockrot-mode=accessed-only`) to silence noise on
+  legacy codebases without complicating the V1 MVP.
+- **LibCST:** Confirmed as an optional extra (`pytest-mockrot[fix]`) to keep the core distribution
+  ultra-lightweight.
+- **License:** Official **MIT** license.

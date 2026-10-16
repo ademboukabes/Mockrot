@@ -2,73 +2,62 @@
 
 @AGENTS.md
 
-> Toutes les règles du projet (contexte, architecture, invariants, standards, Git) sont dans
-> [`AGENTS.md`](./AGENTS.md), importé ci-dessus. **Ne pas les dupliquer ici.** Ce fichier ne contient
-> que les consignes propres à **Claude Code**.
+> All project-wide engineering rules (context, architecture, invariants, code standards, Git workflow)
+> are defined in [`AGENTS.md`](./AGENTS.md), imported above. **Do not duplicate them here.**
+> This file contains operational guidelines specifically tailored for **Claude Code**.
 
 ---
 
-## Au démarrage de chaque tâche
+## At the Start of Every Task
 
-1. `git status`, `git branch --show-current`, `git log --oneline -10` : connaître l'état du dépôt.
-2. Si on est sur `main` → créer une branche selon la convention (`AGENTS.md` §8) **avant** toute
-   modification.
-3. Relire l'exigence concernée (F-ID) dans `cahierdecharge.md` et les sections pertinentes de
-   `AGENTS.md` (§4 invariants, §5 pièges).
-4. Lire le code existant impacté avant de proposer quoi que ce soit.
+1. Run `git status`, `git branch --show-current`, and `git log --oneline -10` to inspect repo state.
+2. If currently on `main` -> create a dedicated branch following conventions (`AGENTS.md` §8) **before** making changes.
+3. Review relevant requirements in `docs/spec/v1-specification.md` and check critical invariants (`AGENTS.md` §4) and technical gotchas (`AGENTS.md` §5).
+4. Read and understand existing affected code before proposing changes.
 
-## Planification
+## Planning Workflow
 
-- **Plan mode obligatoire** si la tâche touche plus d'un module, l'API publique, `pyproject.toml`,
-  la CI, ou ajoute une dépendance. Présenter : objectif, fichiers impactés, approche, tests prévus,
-  risques. **Attendre la validation** avant d'écrire du code.
-- Suivre l'avancement avec la todo list ; une étape = un résultat vérifiable.
-- Pour une exploration large du code ou de la doc d'une lib (`unittest.mock`, `pydantic`,
-  `pytest`), déléguer à un sous-agent pour préserver le contexte principal.
+- **Plan mode mandatory** if the task modifies more than one module, affects public APIs, changes `pyproject.toml`, touches CI workflows, or adds a dependency. Present: objective, impacted files, technical approach, tests planned, and potential risks. **Wait for approval** before writing code.
+- Track progress sequentially; each step must yield a verifiable result.
+- For deep library exploration (`unittest.mock`, `pydantic`, `pytest`), delegate to a subagent to preserve the primary context window.
 
-## Boucle d'implémentation
+## Implementation Loop
 
-- Test rouge → implémentation minimale → refactor (`AGENTS.md` §6).
-- Après chaque modification : lancer **les tests ciblés** (`uv run pytest tests/unit/test_x.py -q`).
-- Avant chaque commit : lancer la **vérification complète** (`AGENTS.md` §10) et lire la sortie.
-- Si une vérification échoue : corriger la cause, jamais contourner (pas de `skip`, pas de
-  `type: ignore`, pas d'assouplissement de config sans accord).
-- Après deux tentatives infructueuses sur le même problème : s'arrêter, exposer l'analyse et les
-  options à l'utilisateur.
+- Test-Driven Development: Red test -> minimal implementation -> refactor (`AGENTS.md` §6).
+- After each edit: run targeted tests (`uv run pytest tests/unit/test_x.py -q`).
+- Before each commit: run the full verification pipeline (`AGENTS.md` §10) and inspect output.
+- If verification fails: fix the root cause. Never bypass with skips, `type: ignore` workarounds, or config relaxations without explicit consent.
+- If stuck after two unsuccessful attempts on the same issue: stop and report analysis and available options to the maintainer.
 
-## Git — ce que Claude peut faire seul
+## Git Permissions & Boundaries
 
-| Autorisé sans demander | Nécessite un accord explicite |
+| Allowed Autonomously | Requires Explicit Approval |
 | :--- | :--- |
-| Créer une branche depuis `main` à jour | `git push` (toute branche) |
-| `git add <chemins explicites>` | Ouvrir / merger une PR |
-| Commit atomique Conventional Commit | `rebase -i` d'une branche déjà poussée |
-| `git commit --fixup` sur sa branche locale | `--force-with-lease` |
-| `git fetch`, `git rebase origin/main` (local) | `reset --hard`, `clean`, `branch -D`, tag de release |
+| Create a feature branch from up-to-date `main` | `git push` (to any branch) |
+| `git add <explicit paths>` | Open or merge a Pull Request |
+| Atomic Conventional Commits | `rebase -i` on already-pushed branches |
+| `git commit --fixup` on local branch | Any `--force` or `--force-with-lease` |
+| `git fetch`, `git rebase origin/main` (local) | Destructive operations (`reset --hard`, `clean -fd`, `branch -D`, release tags) |
 
-Avant chaque commit : montrer `git diff --staged --stat`, vérifier qu'aucun fichier hors périmètre
-n'est inclus, puis commiter avec un message conforme (anglais, impératif, ≤ 72 caractères, corps
-expliquant le *pourquoi*).
+Before committing: inspect `git diff --staged --stat`, ensure no out-of-scope files are included, and write a strict Conventional Commit message in English (imperative mood, lowercase summary, <= 72 characters, body explaining the *why*).
 
-## Fichiers protégés
+## Protected Files
 
-Ne pas modifier sans demande explicite : `cahierdecharge.md`, `AGENTS.md`, `CLAUDE.md`, `LICENSE`,
-`.github/workflows/*`, la configuration `[tool.ruff]` / `[tool.pyright]` de `pyproject.toml`.
-Exception : ajouter un nouveau piège découvert dans `AGENTS.md` §5 (en le signalant).
+Do not modify without explicit request: `docs/spec/v1-specification.md`, `AGENTS.md`, `CLAUDE.md`, `LICENSE`, `.github/workflows/*`, or the `[tool.ruff]` / `[tool.pyright]` configuration in `pyproject.toml`.
+Exception: Document newly discovered technical gotchas in `AGENTS.md` §5 (notifying the user).
 
-## Communication avec l'utilisateur
+## Communication
 
-- Répondre en **français**, de manière concise et technique.
-- En fin de tâche, toujours fournir :
-  - **Fait :** ce qui a changé (fichiers, commits).
-  - **Pourquoi :** décisions et compromis.
-  - **Vérifié :** commandes exécutées et résultats réels.
-  - **Reste à faire / risques :** limites connues, points non vérifiés, questions ouvertes.
-- Ne jamais affirmer qu'un test passe sans l'avoir exécuté dans la session.
-- Signaler proactivement toute incohérence repérée dans le cahier des charges plutôt que de la
-  « corriger » silencieusement.
+- Maintainer interaction can be in French or English as preferred by the maintainer.
+- All code, docstrings, comments, commit messages, PRs, and documentation must be strictly in **English**.
+- At the end of each task, summarize:
+  - **Done:** what changed (files, commits).
+  - **Why:** key technical decisions and trade-offs.
+  - **Verified:** commands executed and actual outputs.
+  - **Next steps / Risks:** known limitations, unverified edge cases, open questions.
+- Never assert a test passes without having executed it in the current session.
 
-## Hygiène du contexte
+## Context Hygiene
 
-- Une session = une tâche cohérente. `/clear` entre deux tâches sans rapport.
-- Ne pas relire inutilement de gros fichiers déjà en contexte ; cibler les plages de lignes.
+- Keep tasks atomic.
+- Avoid repeatedly dumping large files already in context; target specific line ranges.
