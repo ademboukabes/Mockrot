@@ -6,8 +6,9 @@ import importlib
 import inspect
 from dataclasses import dataclass
 from typing import TypedDict
+from unittest import mock
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import mockrot.validator
 from mockrot.extractor import extract_contract
@@ -17,6 +18,7 @@ from mockrot.validator import (
     validate_async,
     validate_interaction,
     validate_signature,
+    validate_zombie_fields,
 )
 
 importlib.reload(mockrot.validator)
@@ -736,3 +738,465 @@ def test_side_effect_callable_returning_invalid_scalar_triggers_drift() -> None:
     violations = validate_interaction(interaction)
     assert len(violations) == 1
     assert violations[0].kind == ViolationKind.RETURN_TYPE_DRIFT
+
+
+# --- F6: Zombie field detection in mocked dictionaries ---
+
+
+class SimpleAddress(BaseModel):
+    street: str
+    zip_code: str
+
+
+class SimpleUser(BaseModel):
+    id: int
+    name: str
+    address: SimpleAddress
+
+
+class AliasedUser(BaseModel):
+    model_config = {"populate_by_name": True}
+    user_id: int = Field(alias="userId")
+    user_name: str
+
+
+class OpenModel(BaseModel):
+    model_config = {"extra": "allow"}
+    name: str
+
+
+@dataclass
+class SimpleDataclass:
+    id: int
+    title: str
+
+
+class SimpleTypedDict(TypedDict):
+    id: int
+    active: bool
+
+
+def returns_pydantic_user() -> SimpleUser:
+    return SimpleUser(id=1, name="Alice", address=SimpleAddress(street="1 Elm", zip_code="75001"))
+
+
+def returns_aliased_user() -> AliasedUser:
+    return AliasedUser(userId=42, user_name="Bob")
+
+
+def returns_open_model() -> OpenModel:
+    return OpenModel(name="Open")
+
+
+def returns_dataclass_obj() -> SimpleDataclass:
+    return SimpleDataclass(id=1, title="Doc")
+
+
+def returns_typeddict_obj() -> SimpleTypedDict:
+    return {"id": 1, "active": True}
+
+
+def returns_optional_user() -> SimpleUser | None:
+    return None
+
+
+def returns_user_list() -> list[SimpleUser]:
+    return []
+
+
+def test_zombie_fields_valid_pydantic_dict_no_violation() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_pydantic_user,
+        target_name="tests.returns_pydantic_user",
+        args=(),
+        kwargs={},
+        returned_value={
+            "id": 1,
+            "name": "Alice",
+            "address": {"street": "1 Elm", "zip_code": "75001"},
+        },
+    )
+    violations = validate_interaction(interaction)
+    assert violations == []
+
+
+def test_zombie_fields_root_zombie_key_in_pydantic_dict() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_pydantic_user,
+        target_name="tests.returns_pydantic_user",
+        args=(),
+        kwargs={},
+        returned_value={
+            "id": 1,
+            "name": "Alice",
+            "address": {"street": "1 Elm", "zip_code": "75001"},
+            "old_token": "expired_jwt_123",
+        },
+    )
+    violations = validate_interaction(interaction)
+    zombie_violations = [v for v in violations if v.kind == ViolationKind.ZOMBIE_FIELD]
+    assert len(zombie_violations) == 1
+    v = zombie_violations[0]
+    assert "old_token" in v.message
+    assert "SimpleUser" in v.message
+    assert "old_token" in v.actual
+
+
+def test_zombie_fields_nested_zombie_key_in_pydantic_dict() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_pydantic_user,
+        target_name="tests.returns_pydantic_user",
+        args=(),
+        kwargs={},
+        returned_value={
+            "id": 1,
+            "name": "Alice",
+            "address": {"street": "1 Elm", "zip_code": "75001", "building_code": "B12"},
+        },
+    )
+    violations = validate_interaction(interaction)
+    zombie_violations = [v for v in violations if v.kind == ViolationKind.ZOMBIE_FIELD]
+    assert len(zombie_violations) == 1
+    v = zombie_violations[0]
+    assert "address.building_code" in v.message
+    assert "SimpleAddress" in v.message
+
+
+def test_zombie_fields_with_declared_alias_no_violation() -> None:
+    # 1. Using field alias "userId"
+    interaction1 = MockInteraction(
+        site=make_site(),
+        target_func=returns_aliased_user,
+        target_name="tests.returns_aliased_user",
+        args=(),
+        kwargs={},
+        returned_value={"userId": 42, "user_name": "Bob"},
+    )
+    assert validate_interaction(interaction1) == []
+
+    # 2. Using field name "user_id"
+    interaction2 = MockInteraction(
+        site=make_site(),
+        target_func=returns_aliased_user,
+        target_name="tests.returns_aliased_user",
+        args=(),
+        kwargs={},
+        returned_value={"user_id": 42, "user_name": "Bob"},
+    )
+    assert validate_interaction(interaction2) == []
+
+
+def test_zombie_fields_in_dataclass_dict() -> None:
+    # Valid dict
+    valid_int = MockInteraction(
+        site=make_site(),
+        target_func=returns_dataclass_obj,
+        target_name="tests.returns_dataclass_obj",
+        args=(),
+        kwargs={},
+        returned_value={"id": 1, "title": "Doc"},
+    )
+    assert validate_interaction(valid_int) == []
+
+    # Zombie field in dict
+    zombie_int = MockInteraction(
+        site=make_site(),
+        target_func=returns_dataclass_obj,
+        target_name="tests.returns_dataclass_obj",
+        args=(),
+        kwargs={},
+        returned_value={"id": 1, "title": "Doc", "extra_dataclass_key": 42},
+    )
+    violations = validate_interaction(zombie_int)
+    zombie_violations = [v for v in violations if v.kind == ViolationKind.ZOMBIE_FIELD]
+    assert len(zombie_violations) == 1
+    assert "extra_dataclass_key" in zombie_violations[0].message
+    assert "SimpleDataclass" in zombie_violations[0].message
+
+
+def test_zombie_fields_in_typeddict_dict() -> None:
+    # Valid TypedDict
+    valid_int = MockInteraction(
+        site=make_site(),
+        target_func=returns_typeddict_obj,
+        target_name="tests.returns_typeddict_obj",
+        args=(),
+        kwargs={},
+        returned_value={"id": 1, "active": True},
+    )
+    assert validate_interaction(valid_int) == []
+
+    # Zombie field in TypedDict
+    zombie_int = MockInteraction(
+        site=make_site(),
+        target_func=returns_typeddict_obj,
+        target_name="tests.returns_typeddict_obj",
+        args=(),
+        kwargs={},
+        returned_value={"id": 1, "active": True, "legacy_flag": False},
+    )
+    violations = validate_interaction(zombie_int)
+    zombie_violations = [v for v in violations if v.kind == ViolationKind.ZOMBIE_FIELD]
+    assert len(zombie_violations) == 1
+    assert "legacy_flag" in zombie_violations[0].message
+
+
+def test_zombie_fields_in_list_of_models() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_user_list,
+        target_name="tests.returns_user_list",
+        args=(),
+        kwargs={},
+        returned_value=[
+            {
+                "id": 1,
+                "name": "Alice",
+                "address": {"street": "1 Elm", "zip_code": "75001"},
+                "deprecated_status": "active",
+            }
+        ],
+    )
+    violations = validate_interaction(interaction)
+    zombie_violations = [v for v in violations if v.kind == ViolationKind.ZOMBIE_FIELD]
+    assert len(zombie_violations) == 1
+    assert "[0].deprecated_status" in zombie_violations[0].message
+
+
+def test_zombie_fields_in_open_model_permitted() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_open_model,
+        target_name="tests.returns_open_model",
+        args=(),
+        kwargs={},
+        returned_value={"name": "Open", "custom_dynamic_key": 999},
+    )
+    # OpenModel has extra="allow", so custom_dynamic_key is permitted
+    assert validate_interaction(interaction) == []
+
+
+def test_zombie_fields_in_optional_union() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_optional_user,
+        target_name="tests.returns_optional_user",
+        args=(),
+        kwargs={},
+        returned_value={
+            "id": 1,
+            "name": "Alice",
+            "address": {"street": "1 Elm", "zip_code": "75001"},
+            "stale_field": 123,
+        },
+    )
+    violations = validate_interaction(interaction)
+    zombie_violations = [v for v in violations if v.kind == ViolationKind.ZOMBIE_FIELD]
+    assert len(zombie_violations) == 1
+    assert "stale_field" in zombie_violations[0].message
+
+
+def test_zombie_fields_when_mock_returns_model_instance() -> None:
+    # When a mock returns a real model instance, validate_return_type
+    # handles it and no zombie field error is raised.
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_pydantic_user,
+        target_name="tests.returns_pydantic_user",
+        args=(),
+        kwargs={},
+        returned_value=SimpleUser(
+            id=1, name="Alice", address=SimpleAddress(street="1 Elm", zip_code="75001")
+        ),
+    )
+    assert validate_interaction(interaction) == []
+
+
+def test_zombie_fields_when_interaction_raised_exception() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_pydantic_user,
+        target_name="tests.returns_pydantic_user",
+        args=(),
+        kwargs={},
+        returned_value={"id": 1, "zombie_ignored": True},
+        raised_exception=RuntimeError("something failed"),
+    )
+    assert validate_interaction(interaction) == []
+
+
+def test_validate_zombie_fields_direct_call() -> None:
+    contract = extract_contract(returns_pydantic_user)
+    assert contract is not None
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_pydantic_user,
+        target_name="tests.returns_pydantic_user",
+        args=(),
+        kwargs={},
+        returned_value={
+            "id": 1,
+            "name": "Alice",
+            "address": {"street": "1 Elm", "zip_code": "75001"},
+            "z": 9,
+        },
+    )
+    violations = validate_zombie_fields(interaction, contract)
+    assert len(violations) == 1
+    assert violations[0].kind == ViolationKind.ZOMBIE_FIELD
+
+
+class Team(BaseModel):
+    name: str
+    members: list[SimpleUser]
+
+
+def returns_team() -> Team:
+    return Team(name="Core", members=[])
+
+
+def test_zombie_fields_in_nested_list_of_models() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_team,
+        target_name="tests.returns_team",
+        args=(),
+        kwargs={},
+        returned_value={
+            "name": "Core",
+            "members": [
+                {
+                    "id": 1,
+                    "name": "Alice",
+                    "address": {"street": "1 Elm", "zip_code": "75001"},
+                    "unwanted_member_field": True,
+                }
+            ],
+        },
+    )
+    violations = validate_interaction(interaction)
+    zombie_violations = [v for v in violations if v.kind == ViolationKind.ZOMBIE_FIELD]
+    assert len(zombie_violations) == 1
+    assert "members[0].unwanted_member_field" in zombie_violations[0].message
+
+
+@dataclass
+class ConfigDataclass:
+    required_id: int
+    optional_mode: str = "fast"
+
+
+def returns_config_dataclass() -> ConfigDataclass:
+    return ConfigDataclass(required_id=1)
+
+
+def test_dataclass_dict_with_optional_field_omitted() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_config_dataclass,
+        target_name="tests.returns_config_dataclass",
+        args=(),
+        kwargs={},
+        returned_value={"required_id": 10},
+    )
+    assert validate_interaction(interaction) == []
+
+
+def test_dataclass_dict_missing_required_field() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_config_dataclass,
+        target_name="tests.returns_config_dataclass",
+        args=(),
+        kwargs={},
+        returned_value={"optional_mode": "slow"},
+    )
+    violations = validate_interaction(interaction)
+    assert len(violations) == 1
+    assert violations[0].kind == ViolationKind.RETURN_TYPE_DRIFT
+
+
+class AccountTypedDict(TypedDict):
+    account_num: int
+    nickname: str
+
+
+def returns_account_typeddict() -> AccountTypedDict:
+    return {"account_num": 1, "nickname": "main"}
+
+
+def test_typeddict_missing_required_key() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_account_typeddict,
+        target_name="tests.returns_account_typeddict",
+        args=(),
+        kwargs={},
+        returned_value={"nickname": "only_name"},
+    )
+    violations = validate_interaction(interaction)
+    assert len(violations) == 1
+    assert violations[0].kind == ViolationKind.RETURN_TYPE_DRIFT
+
+
+def test_dataclass_type_hints_fallback_on_name_error() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_dataclass_obj,
+        target_name="tests.returns_dataclass_obj",
+        args=(),
+        kwargs={},
+        returned_value={"id": 1, "title": "Doc", "zombie": 456},
+    )
+    with mock.patch("mockrot.validator.get_type_hints", side_effect=NameError("simulated")):
+        violations = validate_interaction(interaction)
+    zombies = [v for v in violations if v.kind == ViolationKind.ZOMBIE_FIELD]
+    assert len(zombies) == 1
+    assert "zombie" in zombies[0].message
+
+
+def test_typeddict_type_hints_fallback_on_name_error() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_typeddict_obj,
+        target_name="tests.returns_typeddict_obj",
+        args=(),
+        kwargs={},
+        returned_value={"id": 1, "active": True, "zombie": 456},
+    )
+    with mock.patch("mockrot.validator.get_type_hints", side_effect=NameError("simulated")):
+        violations = validate_interaction(interaction)
+    zombies = [v for v in violations if v.kind == ViolationKind.ZOMBIE_FIELD]
+    assert len(zombies) == 1
+    assert "zombie" in zombies[0].message
+
+
+def test_validate_dataclass_dict_fallback_on_name_error() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_dataclass_obj,
+        target_name="tests.returns_dataclass_obj",
+        args=(),
+        kwargs={},
+        returned_value={"id": 1, "title": "Doc"},
+    )
+    with mock.patch("mockrot.validator.get_type_hints", side_effect=NameError("simulated")):
+        violations = validate_interaction(interaction)
+    assert violations == []
+
+
+def test_validate_typeddict_fallback_on_name_error() -> None:
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_typeddict_obj,
+        target_name="tests.returns_typeddict_obj",
+        args=(),
+        kwargs={},
+        returned_value={"id": 1, "active": True},
+    )
+    with mock.patch("mockrot.validator.get_type_hints", side_effect=NameError("simulated")):
+        violations = validate_interaction(interaction)
+    assert violations == []
