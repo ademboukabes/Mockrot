@@ -171,6 +171,15 @@ Le code de la §6 du cahier des charges est **indicatif**, pas à copier tel que
 - **`pytest-xdist`.** Le rapport doit à terme agréger les résultats des workers : ne pas coder un
   registre qui suppose un processus unique sans l'isoler derrière une interface.
 
+- **`inspect.stack()` vs `sys._getframe`.** `inspect.stack()` effectue des appels `os.stat`
+  sur chaque fichier de la pile pour lire le code source, ce qui brise les suites asynchrones
+  vérifiant les I/O bloquantes (ex. `blockbuster.BlockingError` dans Starlette) et introduit un
+  surcoût majeur. Utiliser `sys._getframe()` pour une inspection purement mémoire sans I/O.
+- **Plugins pytest internes utilisant `MonkeyPatch.setattr`.** `pytest-asyncio` monkeypatche
+  `item.obj` pour synchroniser l'exécution des tests coroutines. Le hook `_patched_monkeypatch_setattr`
+  doit ignorer les appels issus des plugins internes de test runner (`pytest_asyncio`, `_pytest`,
+  `pluggy`) pour ne pas valider à tort les fonctions de test elles-mêmes comme des mocks.
+
 Tout nouveau piège découvert est **ajouté à cette section** dans le même commit que son correctif.
 
 ---

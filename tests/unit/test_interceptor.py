@@ -338,3 +338,25 @@ def test_intercepts_async_callable_when_it_raises_exception(
     assert len(captured) == 1
     assert captured[0].is_async_call is True
     assert isinstance(captured[0].raised_exception, ConnectionResetError)
+
+
+def test_ignores_monkeypatch_originating_from_runner_plugins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[MockInteraction] = []
+    install_interceptor(captured.append)
+
+    def replacement_fn(price: int, tax: int) -> int:
+        return price + tax
+
+    # Simulate caller from pytest_asyncio/plugin.py
+    with mock.patch("sys._getframe") as mock_getframe:
+        fake_frame = mock.MagicMock()
+        fake_frame.f_code.co_filename = "/path/site-packages/pytest_asyncio/plugin.py"
+        mock_getframe.return_value = fake_frame
+
+        monkeypatch.setattr(f"{__name__}.compute_total", replacement_fn)
+
+    # Calling compute_total should not have been wrapped by Mockrot
+    assert compute_total(1, 2) == 3
+    assert len(captured) == 0
