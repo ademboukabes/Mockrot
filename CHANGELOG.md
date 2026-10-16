@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-10-16
+
+### Fixed
+- **Interceptor Recursion Guard:** Immunize `unittest.mock._patch.__enter__` and `MonkeyPatch.setattr` against recursion loops during dynamic module reloads or self-hosting test suites by preserving immutable references to native Python standard library methods.
+- **Test Suite Hygiene:** Clean up top-level module reload calls in unit tests to ensure test sessions remain stable and non-mutating.
+
+### Changed
+- **Documentation & Open Source Polish:** Fully standardized open-source governance documents (`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`), translated project specifications and agent directives into English, and updated official badges.
+
 ## [0.1.0] - 2026-10-16
 
 ### Added
