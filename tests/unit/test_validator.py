@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import inspect
 from dataclasses import dataclass
 from typing import TypedDict
@@ -10,7 +9,6 @@ from unittest import mock
 
 from pydantic import BaseModel, Field
 
-import mockrot.validator
 from mockrot.extractor import extract_contract
 from mockrot.models import Contract, MockInteraction, MockSite, ViolationKind
 from mockrot.validator import (
@@ -20,8 +18,6 @@ from mockrot.validator import (
     validate_signature,
     validate_zombie_fields,
 )
-
-importlib.reload(mockrot.validator)
 
 
 class UserService:

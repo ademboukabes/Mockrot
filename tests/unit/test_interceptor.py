@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 from typing import TYPE_CHECKING, Any
 from unittest import mock
 
@@ -15,8 +14,6 @@ from mockrot.interceptor import (
     is_interceptor_installed,
     uninstall_interceptor,
 )
-
-importlib.reload(mockrot.interceptor)
 
 if TYPE_CHECKING:
     from mockrot.models import MockInteraction
@@ -48,6 +45,7 @@ def _cleanup_interceptor() -> Any:
 
 
 def test_installs_and_uninstalls_idempotently() -> None:
+    uninstall_interceptor()
     assert not is_interceptor_installed()
 
     install_interceptor(lambda _: None)

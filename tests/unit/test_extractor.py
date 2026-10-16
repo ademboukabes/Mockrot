@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import importlib
 import inspect
 from typing import Any
 
 from pydantic import BaseModel
 
-import mockrot.extractor
 from mockrot.extractor import clear_extractor_cache, extract_contract
-
-importlib.reload(mockrot.extractor)
 
 
 def sample_sync_func(user_id: int, flag: bool = False) -> str:

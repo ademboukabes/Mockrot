@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -16,8 +15,6 @@ from mockrot.plugin import (
     pytest_report_header,
     pytest_unconfigure,
 )
-
-importlib.reload(mockrot.plugin)
 
 
 def test_registers_mockrot_cli_group_when_addoption_called() -> None:

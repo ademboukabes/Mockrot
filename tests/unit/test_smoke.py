@@ -7,7 +7,14 @@ import importlib
 import pytest
 
 import mockrot
+import mockrot.cli
+import mockrot.errors
+import mockrot.extractor
+import mockrot.interceptor
 import mockrot.models
+import mockrot.plugin
+import mockrot.reporter
+import mockrot.validator
 from mockrot.errors import ContractValidationError, MockrotError
 from mockrot.models import MockSite, Violation, ViolationKind
 
@@ -17,6 +24,21 @@ def test_exposes_version_when_package_is_imported() -> None:
     importlib.reload(mockrot.models)
     assert isinstance(mockrot.__version__, str)
     assert mockrot.__version__ == "0.1.0"
+
+
+def test_modules_reload_cleanly_without_side_effects() -> None:
+    for mod in (
+        mockrot.errors,
+        mockrot.models,
+        mockrot.cli,
+        mockrot.extractor,
+        mockrot.interceptor,
+        mockrot.reporter,
+        mockrot.validator,
+        mockrot.plugin,
+    ):
+        reloaded = importlib.reload(mod)
+        assert reloaded is not None
 
 
 def test_instantiates_violation_model_when_valid_attributes_provided() -> None:

@@ -286,12 +286,29 @@ def _wrap_plain_callable(func: Any, orig_target: Any, target_name: str) -> Any:
     return callable_wrapper
 
 
+# Preserve true original unpatched standard library functions across reloads/patches
+_orig_patch: Any = (
+    getattr(mock, "_mockrot_original_patch_enter", None) or getattr(mock._patch, "__enter__")  # noqa: B009 # pyright: ignore[reportPrivateUsage]
+)
+_ORIGINAL_PATCH_ENTER: Callable[..., Any] = _orig_patch
+setattr(mock, "_mockrot_original_patch_enter", _ORIGINAL_PATCH_ENTER)  # noqa: B010
+
+_orig_monkeypatch: Callable[..., Any] | None = None
+if _mp is not None and hasattr(_mp, "MonkeyPatch"):
+    _orig_monkeypatch = (
+        getattr(_mp, "_mockrot_original_monkeypatch_setattr", None) or _mp.MonkeyPatch.setattr
+    )
+    setattr(_mp, "_mockrot_original_monkeypatch_setattr", _orig_monkeypatch)  # noqa: B010
+_ORIGINAL_MONKEYPATCH_SETATTR: Callable[..., Any] | None = _orig_monkeypatch
+
+
 def _patched_enter(patch_self: Any) -> Any:
     """Intercept unittest.mock._patch.__enter__ to wrap created mocks transparently."""
-    if _STATE.orig_patch_enter is None:
-        return patch_self  # pragma: no cover
+    enter_fn = _STATE.orig_patch_enter
+    if enter_fn is None or getattr(enter_fn, "__mockrot_wrapper__", False):
+        enter_fn = _ORIGINAL_PATCH_ENTER
 
-    mock_obj = _STATE.orig_patch_enter(patch_self)
+    mock_obj = enter_fn(patch_self)
 
     try:
         orig_target = getattr(patch_self, "temp_original", None)
@@ -306,6 +323,9 @@ def _patched_enter(patch_self: Any) -> Any:
         pass
 
     return mock_obj
+
+
+_patched_enter.__mockrot_wrapper__ = True  # type: ignore[attr-defined]
 
 
 def _is_runner_internal_caller() -> bool:
@@ -343,25 +363,28 @@ def _patched_monkeypatch_setattr(
     raising: bool = True,
 ) -> None:
     """Intercept pytest.MonkeyPatch.setattr to wrap replacement callables or mocks."""
-    if _STATE.orig_monkeypatch_setattr is None:
+    setattr_fn = _STATE.orig_monkeypatch_setattr
+    if setattr_fn is None or getattr(setattr_fn, "__mockrot_wrapper__", False):
+        setattr_fn = _ORIGINAL_MONKEYPATCH_SETATTR
+    if setattr_fn is None:
         return  # pragma: no cover
 
     if _is_active():
-        _STATE.orig_monkeypatch_setattr(self, target, name, value, raising=raising)
+        setattr_fn(self, target, name, value, raising=raising)
         return
 
     _TLS.active = True
     try:
         if _is_runner_internal_caller():
             if value is mock.DEFAULT:
-                _STATE.orig_monkeypatch_setattr(self, target, name, raising=raising)
+                setattr_fn(self, target, name, raising=raising)
             else:
-                _STATE.orig_monkeypatch_setattr(self, target, name, value, raising=raising)
+                setattr_fn(self, target, name, value, raising=raising)
             return
 
         if value is mock.DEFAULT:
             real_name = _wrap_dotted_monkeypatch(target, name) if isinstance(target, str) else name
-            _STATE.orig_monkeypatch_setattr(self, target, real_name, raising=raising)
+            setattr_fn(self, target, real_name, raising=raising)
             return
 
         if isinstance(name, str):
@@ -372,9 +395,12 @@ def _patched_monkeypatch_setattr(
             elif callable(value) and callable(orig_target):
                 value = _wrap_plain_callable(value, orig_target, target_name)
 
-        _STATE.orig_monkeypatch_setattr(self, target, name, value, raising=raising)
+        setattr_fn(self, target, name, value, raising=raising)
     finally:
         _TLS.active = False
+
+
+_patched_monkeypatch_setattr.__mockrot_wrapper__ = True  # type: ignore[attr-defined]
 
 
 def is_interceptor_installed() -> bool:
@@ -389,11 +415,17 @@ def install_interceptor(listener: InteractionListener) -> None:
         return
 
     patch_cls: Any = mock._patch  # pyright: ignore[reportPrivateUsage]  # Wrap unittest.mock._patch.__enter__
-    _STATE.orig_patch_enter = patch_cls.__enter__
+    if not getattr(patch_cls.__enter__, "__mockrot_wrapper__", False):
+        _STATE.orig_patch_enter = patch_cls.__enter__
+    elif _STATE.orig_patch_enter is None:
+        _STATE.orig_patch_enter = _ORIGINAL_PATCH_ENTER
     patch_cls.__enter__ = _patched_enter
 
     if _mp is not None and hasattr(_mp, "MonkeyPatch"):
-        _STATE.orig_monkeypatch_setattr = _mp.MonkeyPatch.setattr
+        if not getattr(_mp.MonkeyPatch.setattr, "__mockrot_wrapper__", False):
+            _STATE.orig_monkeypatch_setattr = _mp.MonkeyPatch.setattr
+        elif _STATE.orig_monkeypatch_setattr is None:
+            _STATE.orig_monkeypatch_setattr = _ORIGINAL_MONKEYPATCH_SETATTR
         _mp.MonkeyPatch.setattr = _patched_monkeypatch_setattr  # type: ignore[assignment]
 
     _STATE.is_installed = True
@@ -404,14 +436,19 @@ def uninstall_interceptor() -> None:
     if not _STATE.is_installed:
         return
 
-    if _STATE.orig_patch_enter is not None:
-        patch_cls: Any = mock._patch  # pyright: ignore[reportPrivateUsage]  # Restore original _patch.__enter__
-        patch_cls.__enter__ = _STATE.orig_patch_enter
-        _STATE.orig_patch_enter = None
+    patch_cls: Any = mock._patch  # pyright: ignore[reportPrivateUsage]  # Restore original _patch.__enter__
+    restore_enter = _STATE.orig_patch_enter
+    if restore_enter is None or getattr(restore_enter, "__mockrot_wrapper__", False):
+        restore_enter = _ORIGINAL_PATCH_ENTER
+    patch_cls.__enter__ = restore_enter
+    _STATE.orig_patch_enter = None
 
-    if _STATE.orig_monkeypatch_setattr is not None:
-        if _mp is not None and hasattr(_mp, "MonkeyPatch"):
-            _mp.MonkeyPatch.setattr = _STATE.orig_monkeypatch_setattr  # type: ignore[assignment]
+    if _mp is not None and hasattr(_mp, "MonkeyPatch"):
+        restore_setattr = _STATE.orig_monkeypatch_setattr
+        if restore_setattr is None or getattr(restore_setattr, "__mockrot_wrapper__", False):
+            restore_setattr = _ORIGINAL_MONKEYPATCH_SETATTR
+        if restore_setattr is not None:
+            _mp.MonkeyPatch.setattr = restore_setattr  # type: ignore[assignment]
         _STATE.orig_monkeypatch_setattr = None
 
     _STATE.listener = None

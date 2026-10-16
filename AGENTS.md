@@ -178,6 +178,11 @@ mockrot/
   `item.obj` to synchronize coroutine tests. The `_patched_monkeypatch_setattr` hook must ignore
   internal runner packages (`pytest_asyncio`, `_pytest`, `pluggy`) to avoid treating test runner
   internals as user mocks.
+- **Interceptor recursion across module reloads.** When modules are dynamically reloaded or tests
+  manipulate patch mechanisms in self-hosting test suites, `_patch.__enter__` may point to a
+  previous wrapper instance. Attaching `__mockrot_wrapper__ = True` tags and caching true standard
+  library functions (`_ORIGINAL_PATCH_ENTER`, `_ORIGINAL_MONKEYPATCH_SETATTR`) directly on the
+  stdlib module namespaces ensures interception calls never enter infinite recursion loops.
 - **No emojis.** Never use emojis in code, docstrings, terminal outputs, or documentation. Maintain
   clean, professional ASCII/Unicode typography.
 

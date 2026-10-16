@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import importlib
 import io
 from typing import Any
 
-import mockrot.reporter
 from mockrot.models import MockSite, Violation, ViolationKind
 from mockrot.reporter import (
     build_violation_table,
@@ -15,8 +13,6 @@ from mockrot.reporter import (
     format_violation_title,
     render_terminal_summary,
 )
-
-importlib.reload(mockrot.reporter)
 
 
 def make_site() -> MockSite:
