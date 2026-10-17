@@ -183,6 +183,21 @@ mockrot/
   previous wrapper instance. Attaching `__mockrot_wrapper__ = True` tags and caching true standard
   library functions (`_ORIGINAL_PATCH_ENTER`, `_ORIGINAL_MONKEYPATCH_SETATTR`) directly on the
   stdlib module namespaces ensures interception calls never enter infinite recursion loops.
+- **Unconfigured `NonCallableMock` return values.** `unittest.mock` generates default `MagicMock`
+  instances when no `return_value` is specified. Validating these against scalar or model return
+  contracts causes immediate false positives. When `isinstance(returned_value, mock.NonCallableMock)`,
+  scalar/model return validation is bypassed (respecting Invariant 4: False negative > False positive).
+  Concrete drifted values (strings, dicts, integers) continue to be strictly validated.
+- **Classmethod and staticmethod descriptors.** When patching class or static methods on a class
+  (`patch.object(Cls, "method")`), `temp_original` is a `classmethod` or `staticmethod` descriptor
+  for which `callable()` returns `False`. The underlying callable must be unwrapped via
+  `type(target) in (classmethod, staticmethod)` and `getattr(target, "__func__", target)`.
+- **AsyncMock invocation-time frame resolution.** Resolving caller frames during coroutine execution
+  (at `await` time) fails when coroutines are scheduled via `asyncio.create_task` because the test
+  function is no longer on the call stack. Frames must be resolved synchronously at the moment
+  `mock(*args, **kwargs)` is invoked. Additionally, skipping internal framework frames must be based
+  on module prefixes (`frame.f_globals["__name__"]`) rather than file path substrings, avoiding
+  false matches when workspaces contain names like `mockrot` or `asyncio`.
 - **No emojis.** Never use emojis in code, docstrings, terminal outputs, or documentation. Maintain
   clean, professional ASCII/Unicode typography.
 

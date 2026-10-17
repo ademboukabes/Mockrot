@@ -194,3 +194,35 @@ def test_signature_drift_on_async_mock(
         ]
     )
     assert result.ret == 1
+
+
+def test_classmethod_signature_drift(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.makepyfile(
+        domain="""
+        class UserRegistry:
+            @classmethod
+            def register(cls, username: str, *, role: str = "member") -> str:
+                return f"{username}:{role}"
+        """
+    )
+    pytester.makepyfile("""
+        from unittest.mock import patch
+        from domain import UserRegistry
+
+        @patch.object(UserRegistry, "register", return_value="ok")
+        def test_classmethod_drift(mock_reg):
+            # Missing required 'username' argument
+            UserRegistry.register(unknown_kwarg=True)
+    """)
+
+    result = pytester.runpytest("--mockrot=strict")
+    result.stdout.fnmatch_lines(
+        [
+            "*Mockrot detected rotting mock (signature_mismatch):*",
+            "*missing a required argument*username*",
+            "*1 failed*",
+        ]
+    )
+    assert result.ret == 1

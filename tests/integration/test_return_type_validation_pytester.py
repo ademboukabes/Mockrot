@@ -171,3 +171,31 @@ def test_return_type_resilience_exception_ignored(
         ]
     )
     assert result.ret == 0
+
+
+def test_unconfigured_mock_passes_strict_mode(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.makepyfile(
+        billing="""
+        def calculate_fee(amount: int) -> int:
+            return amount // 10
+        """
+    )
+    pytester.makepyfile("""
+        from unittest.mock import patch
+        import billing
+
+        @patch("billing.calculate_fee")
+        def test_fee_unconfigured(mock_fee):
+            fee = billing.calculate_fee(100)
+            mock_fee.assert_called_once_with(100)
+    """)
+
+    result = pytester.runpytest("--mockrot=strict")
+    result.stdout.fnmatch_lines(
+        [
+            "*1 passed*",
+        ]
+    )
+    assert result.ret == 0

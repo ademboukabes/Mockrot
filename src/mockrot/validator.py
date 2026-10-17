@@ -7,6 +7,7 @@ import typing
 from collections.abc import Iterable, Sequence
 from dataclasses import MISSING, fields, is_dataclass
 from typing import TYPE_CHECKING, Any, get_args, get_origin, get_type_hints, is_typeddict
+from unittest import mock
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
@@ -155,6 +156,13 @@ def validate_return_type(
 
     # Exceptions (instances and classes) simulate error conditions and are always legitimate (F5)
     if isinstance(val, BaseException) or (isinstance(val, type) and issubclass(val, BaseException)):
+        return []
+
+    # Test doubles (Mock, MagicMock, AsyncMock) simulate unconfigured return values or abstract
+    # test doubles. To satisfy Invariant 4 (False negative > False positive) and eliminate noisy
+    # false positives on tests asserting on calls without configuring return_value, skip
+    # scalar/model type validation.
+    if isinstance(val, mock.NonCallableMock):
         return []
 
     try:

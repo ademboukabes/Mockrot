@@ -358,3 +358,64 @@ def test_ignores_monkeypatch_originating_from_runner_plugins(
     # Calling compute_total should not have been wrapped by Mockrot
     assert compute_total(1, 2) == 3
     assert len(captured) == 0
+
+
+class SampleClassMethods:
+    """Sample class with classmethod and staticmethod."""
+
+    @classmethod
+    def process_class(cls, count: int) -> str:
+        return f"cls:{count}"
+
+    @staticmethod
+    def process_static(tag: str) -> str:
+        return f"static:{tag}"
+
+
+def test_intercept_classmethod_patch() -> None:
+    captured: list[MockInteraction] = []
+    install_interceptor(captured.append)
+
+    with mock.patch.object(SampleClassMethods, "process_class", return_value="custom"):
+        res = SampleClassMethods.process_class(42)
+        assert res == "custom"
+
+    assert len(captured) == 1
+    assert captured[0].args == (42,)
+    assert captured[0].returned_value == "custom"
+    assert "SampleClassMethods.process_class" in captured[0].target_name
+
+
+def test_intercept_staticmethod_patch() -> None:
+    captured: list[MockInteraction] = []
+    install_interceptor(captured.append)
+
+    with mock.patch.object(SampleClassMethods, "process_static", return_value="static_custom"):
+        res = SampleClassMethods.process_static("alpha")
+        assert res == "static_custom"
+
+    assert len(captured) == 1
+    assert captured[0].args == ("alpha",)
+    assert captured[0].returned_value == "static_custom"
+    assert "SampleClassMethods.process_static" in captured[0].target_name
+
+
+def test_async_mock_site_captured_at_call_time() -> None:
+    captured: list[MockInteraction] = []
+    install_interceptor(captured.append)
+
+    m = mock.AsyncMock(return_value="bad")
+
+    with mock.patch(f"{__name__}.fetch_status", m):
+
+        async def background_worker() -> None:
+            coro = fetch_status("/test")
+            task = asyncio.create_task(coro)
+            await task
+
+        asyncio.run(background_worker())
+
+    assert len(captured) == 1
+    assert captured[0].site.file_path.endswith("test_interceptor.py")
+    assert captured[0].site.test_name == "background_worker"
+    assert "asyncio" not in captured[0].site.file_path

@@ -1196,3 +1196,66 @@ def test_validate_typeddict_fallback_on_name_error() -> None:
     with mock.patch("mockrot.validator.get_type_hints", side_effect=NameError("simulated")):
         violations = validate_interaction(interaction)
     assert violations == []
+
+
+def test_unconfigured_mock_return_values_produce_no_violations() -> None:
+    """NonCallableMock instances (Mock, MagicMock, AsyncMock) must not trigger false positives."""
+    for mock_val in (mock.MagicMock(), mock.Mock(), mock.AsyncMock()):
+        # 1. Scalar return type -> int
+        interaction_int = MockInteraction(
+            site=make_site(),
+            target_func=returns_int,
+            target_name="tests.returns_int",
+            args=(10,),
+            kwargs={},
+            returned_value=mock_val,
+        )
+        assert validate_interaction(interaction_int) == []
+
+        # 2. Pydantic BaseModel return type
+        interaction_model = MockInteraction(
+            site=make_site(),
+            target_func=returns_user,
+            target_name="tests.returns_user",
+            args=(),
+            kwargs={},
+            returned_value=mock_val,
+        )
+        assert validate_interaction(interaction_model) == []
+
+        # 3. Dataclass return type
+        interaction_dc = MockInteraction(
+            site=make_site(),
+            target_func=returns_point,
+            target_name="tests.returns_point",
+            args=(),
+            kwargs={},
+            returned_value=mock_val,
+        )
+        assert validate_interaction(interaction_dc) == []
+
+        # 4. TypedDict return type
+        interaction_td = MockInteraction(
+            site=make_site(),
+            target_func=returns_config,
+            target_name="tests.returns_config",
+            args=(),
+            kwargs={},
+            returned_value=mock_val,
+        )
+        assert validate_interaction(interaction_td) == []
+
+
+def test_concrete_drifted_return_value_still_detected() -> None:
+    """Concrete values with drifted types must still be strictly detected."""
+    interaction = MockInteraction(
+        site=make_site(),
+        target_func=returns_int,
+        target_name="tests.returns_int",
+        args=(10,),
+        kwargs={},
+        returned_value="not_an_int",
+    )
+    violations = validate_interaction(interaction)
+    assert len(violations) == 1
+    assert violations[0].kind == ViolationKind.RETURN_TYPE_DRIFT

@@ -45,28 +45,33 @@ def _is_active() -> bool:
     return bool(getattr(_TLS, "active", False))
 
 
+_SKIP_MODULE_PREFIXES: tuple[str, ...] = (
+    "unittest.mock",
+    "contextlib",
+    "_pytest",
+    "pluggy",
+    "pytest_asyncio",
+    "asyncio",
+    "concurrent.futures",
+    "mockrot",
+)
+
+
 def _resolve_mock_site() -> MockSite:
     """Resolve caller file, line, and test name, skipping internal frameworks."""
     try:
         # sys._getframe is used for fast memory-only frame traversal without blocking disk I/O
         frame = sys._getframe(1)  # pyright: ignore[reportPrivateUsage] - fast frame inspection
         while frame is not None:
-            fn = frame.f_code.co_filename
+            mod_name = frame.f_globals.get("__name__", "")
             if any(
-                skip in fn
-                for skip in (
-                    "unittest/mock.py",
-                    "contextlib.py",
-                    "_pytest",
-                    "/mockrot/",
-                    "pluggy",
-                    "pytest_asyncio",
-                )
+                mod_name == skip or mod_name.startswith(f"{skip}.")
+                for skip in _SKIP_MODULE_PREFIXES
             ):
                 frame = frame.f_back
                 continue
             return MockSite(
-                file_path=fn,
+                file_path=frame.f_code.co_filename,
                 line_number=frame.f_lineno,
                 test_name=frame.f_code.co_name,
             )
@@ -103,45 +108,50 @@ def _wrap_mock_object(mock_obj: Any, orig_target: Any, target_name: str) -> None
 
     if is_async:
 
-        async def async_interceptor_wrapper(*args: Any, **kwargs: Any) -> Any:
-            if _is_active() or _STATE.listener is None:
-                return await orig_mock_call(*args, **kwargs)
+        def async_interceptor_wrapper(*args: Any, **kwargs: Any) -> Any:
+            # Capture site synchronously at the exact moment mock() is invoked by caller
+            site = _resolve_mock_site()
 
-            _TLS.active = True
-            try:
-                site = _resolve_mock_site()
+            async def _execute_and_validate() -> Any:
+                if _is_active() or _STATE.listener is None:
+                    return await orig_mock_call(*args, **kwargs)
+
+                _TLS.active = True
                 try:
-                    result = await orig_mock_call(*args, **kwargs)
-                except BaseException as exc:
-                    _STATE.listener(
-                        MockInteraction(
-                            site=site,
-                            target_func=orig_target,
-                            target_name=target_name,
-                            args=args,
-                            kwargs=kwargs,
-                            returned_value=None,
-                            raised_exception=exc,
-                            is_async_call=True,
+                    try:
+                        result = await orig_mock_call(*args, **kwargs)
+                    except BaseException as exc:
+                        _STATE.listener(
+                            MockInteraction(
+                                site=site,
+                                target_func=orig_target,
+                                target_name=target_name,
+                                args=args,
+                                kwargs=kwargs,
+                                returned_value=None,
+                                raised_exception=exc,
+                                is_async_call=True,
+                            )
                         )
-                    )
-                    raise
-                else:
-                    _STATE.listener(
-                        MockInteraction(
-                            site=site,
-                            target_func=orig_target,
-                            target_name=target_name,
-                            args=args,
-                            kwargs=kwargs,
-                            returned_value=result,
-                            raised_exception=None,
-                            is_async_call=True,
+                        raise
+                    else:
+                        _STATE.listener(
+                            MockInteraction(
+                                site=site,
+                                target_func=orig_target,
+                                target_name=target_name,
+                                args=args,
+                                kwargs=kwargs,
+                                returned_value=result,
+                                raised_exception=None,
+                                is_async_call=True,
+                            )
                         )
-                    )
-                    return result
-            finally:
-                _TLS.active = False
+                        return result
+                finally:
+                    _TLS.active = False
+
+            return _execute_and_validate()
 
         async_interceptor_wrapper.__mockrot_wrapped__ = True  # type: ignore[attr-defined]
         mock_obj._mock_call = async_interceptor_wrapper
@@ -302,6 +312,13 @@ if _mp is not None and hasattr(_mp, "MonkeyPatch"):
 _ORIGINAL_MONKEYPATCH_SETATTR: Callable[..., Any] | None = _orig_monkeypatch
 
 
+def _unwrap_descriptor(target: Any) -> Any:
+    """Extract underlying callable from classmethod or staticmethod descriptor."""
+    if type(target) in (classmethod, staticmethod):
+        return getattr(target, "__func__", target)
+    return target
+
+
 def _patched_enter(patch_self: Any) -> Any:
     """Intercept unittest.mock._patch.__enter__ to wrap created mocks transparently."""
     enter_fn = _STATE.orig_patch_enter
@@ -311,7 +328,7 @@ def _patched_enter(patch_self: Any) -> Any:
     mock_obj = enter_fn(patch_self)
 
     try:
-        orig_target = getattr(patch_self, "temp_original", None)
+        orig_target: Any = _unwrap_descriptor(getattr(patch_self, "temp_original", None))
         attr_name = getattr(patch_self, "attribute", "")
         target_obj = getattr(patch_self, "target", None)
         target_name = _get_target_name(target_obj, attr_name)
@@ -332,8 +349,11 @@ def _is_runner_internal_caller() -> bool:
     """Return True if caller of monkeypatch is an internal test runner or plugin."""
     try:
         caller = sys._getframe(2)  # pyright: ignore[reportPrivateUsage] - caller inspection
-        caller_fn = caller.f_code.co_filename
-        return any(skip in caller_fn for skip in ("pytest_asyncio", "_pytest", "pluggy"))
+        mod_name = caller.f_globals.get("__name__", "")
+        return any(
+            mod_name == skip or mod_name.startswith(f"{skip}.")
+            for skip in ("pytest_asyncio", "_pytest", "pluggy")
+        )
     except (AttributeError, ValueError):
         return False
 
@@ -345,13 +365,27 @@ def _wrap_dotted_monkeypatch(target: str, value: Any) -> Any:
     mod_name, attr = target.rsplit(".", 1)
     try:
         mod = sys.modules.get(mod_name) or __import__(mod_name, fromlist=[attr])
-        orig_target = getattr(mod, attr, None)
+        orig_target: Any = _unwrap_descriptor(getattr(mod, attr, None))
         if hasattr(value, "_mock_call"):
             _wrap_mock_object(value, orig_target, target)
         elif callable(value) and callable(orig_target):
             return _wrap_plain_callable(value, orig_target, target)
     except Exception:  # noqa: BLE001
         pass
+    return value
+
+
+def _wrap_monkeypatch_replacement(target: object, name: str, value: Any) -> Any:
+    """Wrap a replacement mock or callable passed to monkeypatch.setattr."""
+    raw_target = inspect.getattr_static(target, name, None)
+    if raw_target is None:
+        raw_target = getattr(target, name, None)
+    orig_target: Any = _unwrap_descriptor(raw_target)
+    target_name = _get_target_name(target, name)
+    if hasattr(value, "_mock_call"):
+        _wrap_mock_object(value, orig_target, target_name)
+    elif callable(value) and callable(orig_target):
+        return _wrap_plain_callable(value, orig_target, target_name)
     return value
 
 
@@ -388,12 +422,7 @@ def _patched_monkeypatch_setattr(
             return
 
         if isinstance(name, str):
-            orig_target = getattr(target, name, None)
-            target_name = _get_target_name(target, name)
-            if hasattr(value, "_mock_call"):
-                _wrap_mock_object(value, orig_target, target_name)
-            elif callable(value) and callable(orig_target):
-                value = _wrap_plain_callable(value, orig_target, target_name)
+            value = _wrap_monkeypatch_replacement(target, name, value)
 
         setattr_fn(self, target, name, value, raising=raising)
     finally:

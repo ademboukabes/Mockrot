@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-10-16
+
+### Fixed
+- **Default Mock False Positive:** Eliminate noisy false positives when functions with return annotations are mocked without an explicit `return_value`. Auto-generated `NonCallableMock` instances (such as default `MagicMock` and `AsyncMock`) are exempted from strict scalar/model type validation (respecting Invariant 4: False negative > False positive). Concrete drifted return values remain strictly enforced.
+- **Classmethod & Staticmethod Interception:** Properly unwrap `classmethod` and `staticmethod` descriptors during patching (`patch.object(Cls, "method")` and `monkeypatch.setattr`), ensuring all signatures and return types are validated transparently.
+- **AsyncMock Frame Resolution:** Resolve violation sites (`MockSite`) synchronously at the moment `mock(*args, **kwargs)` is invoked by caller, ensuring accurate file and line reporting even when coroutines run inside background tasks (`asyncio.create_task`).
+- **Robust Module Filtering:** Replace fragile file path substring filtering with module name prefixes (`frame.f_globals["__name__"]`), preventing frame resolution errors in directories matching framework names.
+
 ## [0.1.1] - 2026-10-16
 
 ### Fixed

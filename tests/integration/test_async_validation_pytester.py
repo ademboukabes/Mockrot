@@ -216,3 +216,39 @@ def test_async_mock_exception_resilience_passes_in_strict_mode(
     result = pytester.runpytest("--mockrot=strict")
     result.stdout.fnmatch_lines(["*1 passed*"])
     assert result.ret == 0
+
+
+def test_async_mock_site_resolution_with_create_task(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.makepyfile(
+        orders="""
+        async def fetch_count() -> int:
+            return 42
+        """
+    )
+    pytester.makepyfile("""
+        import asyncio
+        from unittest.mock import patch, AsyncMock
+        import orders
+
+        @patch("orders.fetch_count", new_callable=AsyncMock, return_value="invalid_string")
+        def test_task_site(mock_count):
+            async def _coro():
+                task = asyncio.create_task(orders.fetch_count())
+                await task
+            asyncio.run(_coro())
+    """)
+
+    result = pytester.runpytest("--mockrot=strict")
+    result.stdout.fnmatch_lines(
+        [
+            "*Mockrot detected rotting mock (return_type_drift):*",
+            "*test_async_mock_site_resolution_with_create_task.py:8 (_coro)*",
+            "*1 failed*",
+        ]
+    )
+    # Ensure asyncio internal files are never reported as the violation site
+    assert "asyncio/events.py" not in result.stdout.str()
+    assert "asyncio/base_events.py" not in result.stdout.str()
+    assert result.ret == 1
