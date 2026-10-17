@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-10-17
+
+### Fixed
+- **Behavioral Transparency on `monkeypatch.setattr`:** Prevent breaking descriptor protocol and losing callable object attributes when users monkeypatch attributes. Only wrap user-defined Python functions (`types.FunctionType`), copy metadata using `functools.wraps`, and leave callable class instances (such as `pretend.call_recorder`), bound methods, and built-ins untouched.
+- **Pytest Internal Targets Ignored:** Skip target functions and objects belonging to pytest internal machinery (`_pytest`, `pluggy`, `pytest_asyncio`), eliminating false positives when test suites patch internal streams (such as `sys.stdin.buffer.read` under `_pytest.capture`).
+
+### Changed
+- **Documentation & Claims:** Updated tagline from "Zero false positives" to "Designed to minimize false positives" and added an explicit "Known Limitations" section in `README.md`.
+- **Test Suite Equivalence:** Added integration tests verifying exact behavioral equivalence between test suites run with and without Mockrot.
+
 ## [0.1.2] - 2026-10-16
 
 ### Fixed

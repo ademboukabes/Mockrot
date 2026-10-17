@@ -9,7 +9,7 @@
 
 **Mockrot** is a `pytest` plugin that detects **rotting mocks** : unit test mocks whose call signatures, return types, or dictionary payloads have silently drifted away from real production contracts.
 
-Zero configuration required. Pure transparency. Zero false positives.
+Zero configuration required. Pure transparency. Designed to minimize false positives.
 
 ---
 
@@ -177,7 +177,20 @@ exclude_targets = [
 ]
 ```
 
+---
+
+## Known Limitations
+
+- **Default Unconfigured Mocks:** Default `MagicMock` or `AsyncMock` instances where no `return_value` was explicitly specified are intentionally bypassed for scalar and model return type validation. Explicitly drifted concrete values continue to be strictly validated.
+- **Structural Model Compatibility:** When a production target returns a Pydantic model or dataclass, returning a dictionary structurally conforming to the model is accepted, but any extraneous keys will trigger zombie field detection.
+- **Strict Scalar / Datetime Types:** Mockrot validates return values using Pydantic v2 in `strict` mode to avoid false negatives. Types like `datetime.datetime`, `uuid.UUID`, or `Enum` must be supplied as Python instances rather than raw JSON strings.
+- **Runner Internals Excluded:** Target symbols or attributes owned by test runners (`_pytest`, `pluggy`, `pytest_asyncio`) are automatically excluded from contract validation.
+- **Dynamic Instance Attributes:** Interception extracts contracts from underlying class declarations. Purely dynamic attributes assigned to individual object instances at runtime fallback gracefully to degraded mode.
+
+---
+
 ## Comparison
+
 
 | Feature | `unittest.mock` | `unittest.mock(autospec=True)` | `pytest-mockrot` |
 | :--- | :---: | :---: | :---: |

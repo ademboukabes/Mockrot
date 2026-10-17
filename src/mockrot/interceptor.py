@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import functools
 import inspect
 import sys
 import threading
+import types
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -43,6 +45,14 @@ _TLS = threading.local()
 def _is_active() -> bool:
     """Return True if currently processing an interception."""
     return bool(getattr(_TLS, "active", False))
+
+
+def _is_pytest_internal(target: Any) -> bool:
+    """Return True if target or its module belongs to pytest internal machinery."""
+    if target is None:
+        return False
+    mod = getattr(target, "__module__", "") or ""
+    return mod.startswith(("_pytest", "pytest"))
 
 
 _SKIP_MODULE_PREFIXES: tuple[str, ...] = (
@@ -98,6 +108,9 @@ def _get_target_name(target: Any, attribute: str | None = None) -> str:
 def _wrap_mock_object(mock_obj: Any, orig_target: Any, target_name: str) -> None:
     """Wrap the _mock_call dispatch of a Mock or AsyncMock instance."""
     if not hasattr(mock_obj, "_mock_call"):
+        return
+
+    if _is_pytest_internal(orig_target):
         return
 
     orig_mock_call = mock_obj._mock_call
@@ -204,11 +217,21 @@ def _wrap_mock_object(mock_obj: Any, orig_target: Any, target_name: str) -> None
 
 def _wrap_plain_callable(func: Any, orig_target: Any, target_name: str) -> Any:
     """Wrap a non-Mock callable (e.g. lambda or dummy function) with interception."""
+    # Only wrap user-defined Python functions (FunctionType).
+    # Leave callable class instances (e.g. pretend.call_recorder), bound methods,
+    # builtins, and partials untouched to preserve method binding and custom attributes.
+    if type(func) is not types.FunctionType:
+        return func
+
     if getattr(func, "__mockrot_wrapped__", False):
+        return func
+
+    if _is_pytest_internal(orig_target):
         return func
 
     if inspect.iscoroutinefunction(func):
 
+        @functools.wraps(func)
         async def async_callable_wrapper(*args: Any, **kwargs: Any) -> Any:
             if _is_active() or _STATE.listener is None:
                 return await func(*args, **kwargs)
@@ -252,6 +275,7 @@ def _wrap_plain_callable(func: Any, orig_target: Any, target_name: str) -> Any:
         async_callable_wrapper.__mockrot_wrapped__ = True  # type: ignore[attr-defined]
         return async_callable_wrapper
 
+    @functools.wraps(func)
     def callable_wrapper(*args: Any, **kwargs: Any) -> Any:
         if _is_active() or _STATE.listener is None:
             return func(*args, **kwargs)
@@ -328,9 +352,13 @@ def _patched_enter(patch_self: Any) -> Any:
     mock_obj = enter_fn(patch_self)
 
     try:
-        orig_target: Any = _unwrap_descriptor(getattr(patch_self, "temp_original", None))
-        attr_name = getattr(patch_self, "attribute", "")
         target_obj = getattr(patch_self, "target", None)
+        if _is_pytest_internal(target_obj):
+            return mock_obj
+        orig_target: Any = _unwrap_descriptor(getattr(patch_self, "temp_original", None))
+        if _is_pytest_internal(orig_target):
+            return mock_obj
+        attr_name = getattr(patch_self, "attribute", "")
         target_name = _get_target_name(target_obj, attr_name)
 
         if callable(orig_target) and hasattr(mock_obj, "_mock_call"):
@@ -360,12 +388,14 @@ def _is_runner_internal_caller() -> bool:
 
 def _wrap_dotted_monkeypatch(target: str, value: Any) -> Any:
     """Wrap replacement mock or callable when monkeypatch uses dotted target string."""
-    if "." not in target:
+    if "." not in target or target.startswith(("_pytest.", "pytest.")):
         return value
     mod_name, attr = target.rsplit(".", 1)
     try:
         mod = sys.modules.get(mod_name) or __import__(mod_name, fromlist=[attr])
         orig_target: Any = _unwrap_descriptor(getattr(mod, attr, None))
+        if _is_pytest_internal(orig_target):
+            return value
         if hasattr(value, "_mock_call"):
             _wrap_mock_object(value, orig_target, target)
         elif callable(value) and callable(orig_target):
@@ -377,9 +407,13 @@ def _wrap_dotted_monkeypatch(target: str, value: Any) -> Any:
 
 def _wrap_monkeypatch_replacement(target: object, name: str, value: Any) -> Any:
     """Wrap a replacement mock or callable passed to monkeypatch.setattr."""
+    if _is_pytest_internal(target):
+        return value
     raw_target = inspect.getattr_static(target, name, None)
     if raw_target is None:
         raw_target = getattr(target, name, None)
+    if _is_pytest_internal(raw_target):
+        return value
     orig_target: Any = _unwrap_descriptor(raw_target)
     target_name = _get_target_name(target, name)
     if hasattr(value, "_mock_call"):

@@ -58,3 +58,59 @@ def test_interceptor_does_not_affect_tests_when_disabled(
         ]
     )
     assert result.ret == 0
+
+
+def test_behavioral_transparency_equivalence_with_and_without_mockrot(
+    pytester: pytest.Pytester,
+) -> None:
+    """Non-regression test: ensure suites with complex monkeypatching behave identically."""
+    pytester.makepyfile("""
+        import sys
+
+        class CustomRecorder:
+            def __init__(self):
+                self.calls = []
+            def __call__(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+                return 42
+
+        class Worker:
+            def do_work(self):
+                return 0
+
+        class DataSource:
+            def read_data(self):
+                return "stream-data"
+
+        class Consumer:
+            def read_data(self):
+                return "initial"
+
+        def test_custom_callable_attributes(monkeypatch):
+            recorder = CustomRecorder()
+            w = Worker()
+            monkeypatch.setattr(w, "do_work", recorder)
+            assert w.do_work("task-1") == 42
+            assert len(recorder.calls) == 1
+            assert recorder.calls[0][0] == ("task-1",)
+
+        def test_bound_method_on_class(monkeypatch):
+            source = DataSource()
+            monkeypatch.setattr(Consumer, "read_data", source.read_data)
+            c = Consumer()
+            assert c.read_data() == "stream-data"
+
+        def test_patch_sys_stdin_buffer(monkeypatch):
+            monkeypatch.setattr(sys.stdin.buffer, "read", lambda *a: b"data")
+            assert sys.stdin.buffer.read() == b"data"
+    """)
+
+    # 1. Run without mockrot
+    res_without = pytester.runpytest()
+    assert res_without.ret == 0
+    res_without.stdout.fnmatch_lines(["*3 passed*"])
+
+    # 2. Run with mockrot=warn
+    res_with = pytester.runpytest("--mockrot=warn")
+    assert res_with.ret == 0
+    res_with.stdout.fnmatch_lines(["*3 passed*"])

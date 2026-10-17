@@ -198,6 +198,16 @@ mockrot/
   `mock(*args, **kwargs)` is invoked. Additionally, skipping internal framework frames must be based
   on module prefixes (`frame.f_globals["__name__"]`) rather than file path substrings, avoiding
   false matches when workspaces contain names like `mockrot` or `asyncio`.
+- **Preserving method binding and custom attributes on monkeypatch.** When `monkeypatch.setattr` replaces
+  an attribute with a custom callable, wrapping it in a generic Python function breaks the descriptor
+  protocol (turning bound methods into functions that expect `self`, raising `TypeError`) and drops
+  custom attributes (such as `recorder.calls` on `pretend.call_recorder`, raising `AttributeError`).
+  Replacement values must only be wrapped if `type(value) is types.FunctionType`, and metadata must be
+  preserved via `functools.wraps`. Non-function callables and bound methods must remain untouched.
+- **Filtering pytest test runner targets.** Tests patching standard I/O streams or pytest internals
+  (e.g. `sys.stdin.buffer.read` under `_pytest.capture.DontReadFromInput`) must be skipped. Any target
+  object whose module or class module belongs to `_pytest` or `pytest` must be bypassed to prevent
+  validating test-runner mock objects instead of real production contracts.
 - **No emojis.** Never use emojis in code, docstrings, terminal outputs, or documentation. Maintain
   clean, professional ASCII/Unicode typography.
 

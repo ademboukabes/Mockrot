@@ -196,3 +196,28 @@ def test_extract_contract_resolves_string_annotation_via_globals() -> None:
     contract = extract_contract(func_with_string_annotation)
     assert contract.return_type is GlobalPayload
     assert contract.return_adapter is not None
+
+
+def test_extract_contract_unresolvable_forward_reference_degrades_gracefully() -> None:
+    clear_extractor_cache()
+
+    def unresolvable_fn() -> MissingTypeForTest:  # type: ignore[name-defined] # noqa: F821
+        return 123
+
+    contract = extract_contract(unresolvable_fn)
+    # When type hints cannot be resolved, graceful fallback without crashing
+    assert contract.signature is not None
+    assert contract.return_type is None
+    assert contract.return_adapter is None
+
+
+def test_extract_contract_raw_string_eval_fallback() -> None:
+    clear_extractor_cache()
+
+    def raw_eval_fn():
+        pass
+
+    raw_eval_fn.__annotations__ = {"return": "int"}
+    contract = extract_contract(raw_eval_fn)
+    assert contract.return_type is int
+    assert contract.return_adapter is not None

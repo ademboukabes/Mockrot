@@ -23,7 +23,7 @@ def test_exposes_version_when_package_is_imported() -> None:
     importlib.reload(mockrot)
     importlib.reload(mockrot.models)
     assert isinstance(mockrot.__version__, str)
-    assert mockrot.__version__ == "0.1.2"
+    assert mockrot.__version__ == "0.1.3"
 
 
 def test_modules_reload_cleanly_without_side_effects() -> None:
